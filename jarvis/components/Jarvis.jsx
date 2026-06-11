@@ -218,8 +218,12 @@ export default function Jarvis() {
       window.removeEventListener('keydown', unlock, true);
       window.removeEventListener('touchend', unlock, true);
     };
+    // `speak` and the ambient helpers are declared later in this component, so
+    // they must NOT appear in the dep array (that would access them during
+    // render -> temporal-dead-zone crash). The handler closes over them and
+    // only runs on a user gesture, by which point they're initialized.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [speak]);
+  }, []);
 
   // Persist conversation whenever it settles (not mid-stream).
   useEffect(() => {
