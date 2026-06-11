@@ -1,0 +1,151 @@
+# J.A.R.V.I.S.
+
+> Just A Rather Very Intelligent System — your own personal AI, in the spirit of
+> Tony Stark's companion. Powered by Claude.
+
+A standalone, visually rich AI assistant: a live animated arc-reactor core, a
+holographic heads-up display, voice in and out, and streaming responses from
+Claude.
+
+![status](https://img.shields.io/badge/build-Mark%20III-7df9ff)
+
+## What it does
+
+- **"Hey JARVIS" — hands-free.** Flip on **AMBIENT** mode and just talk. JARVIS
+  listens for the wake word across the room, answers out loud, then keeps the
+  floor open so you can follow up without repeating yourself — a real
+  back-and-forth conversation, no buttons.
+- **Push-to-talk or type.** Prefer control? Tap the mic for one-shot voice, or
+  use the full text chat with live, streaming responses.
+- **A true 3D holographic reactor.** A WebGL arc reactor with volumetric
+  **bloom**, gimbal rings, a particle shell and depth/parallax — and it pulses
+  to live audio: your voice while you speak, his voice while he replies. Colour
+  shifts by state (green listening, amber thinking, blue speaking). Devices
+  without WebGL fall back to a 2D canvas reactor automatically.
+- **Streaming speech.** JARVIS starts talking sentence-by-sentence *as the
+  reply is still arriving*, instead of waiting for the whole thing — so he
+  responds almost instantly.
+- **Real-world knowledge, with receipts.** Live web search (Claude's
+  server-side tool) lets JARVIS answer current questions — news, prices,
+  weather, recent events — and the sources appear as glowing HUD chips beneath
+  his reply. He also knows your local time and greets you by time of day.
+- **Speaks your language.** JARVIS detects the language you write or speak in
+  and replies in it, choosing a matching voice — automatically.
+- **Live systems dashboard.** A HUD panel with a running clock, battery,
+  network status, and (with permission) **geolocation weather** pulled from
+  Open-Meteo.
+- **Word-synced core.** The reactor pulses on each word he actually speaks,
+  driven by the speech engine's real word-boundary events.
+- **Persistent memory.** Your conversation is remembered across page reloads,
+  so JARVIS picks up where you left off. Hit **RESET** to wipe and start fresh.
+- **Holographic distortion.** Subtle RGB-split glitches, a drifting hologram
+  band, and flicker give it that projected-from-a-reactor feel.
+- **The JARVIS persona.** Composed, witty, proactive — defined in
+  `lib/persona.js`, easy to retune.
+
+Your Anthropic API key stays on the server — the browser never sees it.
+
+## Getting started
+
+You need [Node.js](https://nodejs.org) 18+ and an Anthropic API key from
+[console.anthropic.com](https://console.anthropic.com/).
+
+```bash
+cd jarvis
+npm install
+
+# add your key
+cp .env.example .env.local
+#   then edit .env.local and paste your ANTHROPIC_API_KEY
+
+npm run dev
+```
+
+Open <http://localhost:3000> and say hello.
+
+## Deploy to Netlify
+
+This folder is preconfigured for Netlify (see `netlify.toml`).
+
+1. Go to [app.netlify.com](https://app.netlify.com) → **Add new site** → **Import
+   an existing project** → connect GitHub → pick this repository.
+2. On the configuration screen, set **Base directory** to `jarvis`.
+   (Build command `npm run build` and the Next.js runtime are detected
+   automatically from `netlify.toml`.)
+3. Open **Environment variables** and add **`ANTHROPIC_API_KEY`** with your key
+   from [console.anthropic.com](https://console.anthropic.com/). Optionally add
+   `JARVIS_ADDRESS`, `JARVIS_MODEL`, or `JARVIS_WEB_SEARCH`.
+4. Click **Deploy**. You'll get a public URL like `your-jarvis.netlify.app` you
+   can open on any device — tap **AMBIENT**, allow the mic, and talk to him.
+
+> **Note:** JARVIS replies stream from a serverless function. On Netlify's free
+> tier, functions cap around 10 seconds — long answers (especially with web
+> search) can be cut short. If you hit that, set `JARVIS_WEB_SEARCH=0` for
+> snappier replies, or upgrade the function timeout.
+
+## Configuration
+
+All optional, set in `.env.local`:
+
+| Variable             | Default            | Purpose                                    |
+| -------------------- | ------------------ | ------------------------------------------ |
+| `ANTHROPIC_API_KEY`  | —                  | **Required.** Your Anthropic API key.      |
+| `JARVIS_MODEL`       | `claude-opus-4-8`  | Which Claude model powers JARVIS.          |
+| `JARVIS_ADDRESS`     | `sir`              | What JARVIS calls you ("sir", your name…). |
+| `JARVIS_WEB_SEARCH`  | `1` (on)           | Set to `0` to disable live web search.     |
+
+> If your account doesn't have web search enabled, JARVIS automatically falls
+> back to a normal answer — nothing breaks.
+
+## Voice support
+
+Voice uses the browser's built-in Web Speech API plus the Web Audio API.
+
+- **Speech recognition** (mic input + the "Hey JARVIS" wake word) works in
+  Chrome and Edge. Other browsers fall back to text only — everything else
+  still works.
+- **Speech synthesis** (spoken replies) works in all modern browsers. JARVIS
+  prefers a British male voice if one is installed.
+- **Live reactor** uses microphone audio analysis; if the browser denies mic
+  access it simply falls back to the time-based animation.
+
+Toggle spoken replies with **VOICE** and hands-free listening with **AMBIENT**,
+top right. The first time you enable either, your browser will ask for
+microphone permission.
+
+### Wake words
+
+JARVIS responds to "JARVIS", "Hey JARVIS", or "Okay JARVIS". After he replies,
+he stays open for a follow-up for about nine seconds — so you can just keep
+talking. Edit the list in `components/Jarvis.jsx` (`WAKE_WORDS`).
+
+## How it's built
+
+- **Next.js 14** (App Router) + **React** + **Tailwind CSS**
+- **`@anthropic-ai/sdk`** streaming from a server route (`app/api/chat/route.js`),
+  with Claude's server-side **web search** tool for live knowledge
+- **Three.js** WebGL reactor with `UnrealBloomPass` (lazy-loaded, with a 2D
+  canvas fallback); canvas starfield for ambience
+- **Web Speech API** for streaming voice in/out and the wake word
+- **Web Audio API** (`AnalyserNode`) for real-time, audio-reactive visuals
+
+## Project layout
+
+```
+jarvis/
+├── app/
+│   ├── api/chat/route.js   # streams Claude responses (server-side, holds the key)
+│   ├── layout.jsx          # fonts + metadata
+│   ├── page.jsx
+│   └── globals.css         # HUD styling + animations
+├── components/
+│   ├── Jarvis.jsx          # the whole interface: chat, voice, memory, state
+│   ├── Reactor.jsx         # picks the 3D reactor, falls back to 2D
+│   ├── Reactor3D.jsx       # WebGL arc reactor with bloom (Three.js)
+│   ├── ReactorCore.jsx     # 2D canvas arc reactor (fallback)
+│   ├── SystemHud.jsx       # live clock / battery / network / weather gauges
+│   └── Starfield.jsx       # ambient background (canvas)
+└── lib/persona.js          # JARVIS's personality / system prompt
+```
+
+## Built with Claude
