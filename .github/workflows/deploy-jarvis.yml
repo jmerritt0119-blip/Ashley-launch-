@@ -65,6 +65,36 @@ jobs:
         working-directory: jarvis
         run: |
           set -o pipefail
+          # Link the site so @netlify/build applies the Next.js runtime's
+          # catch-all routing config to the deploy (not just the function).
+          netlify link --id "$NETLIFY_SITE_ID" || true
           netlify deploy --build --prod --site "$NETLIFY_SITE_ID" | tee /tmp/deploy.out
           echo "================ LIVE URL ================"
           grep -Eo 'https://[a-zA-Z0-9.-]+\.netlify\.app' /tmp/deploy.out | tail -1 || true
+
+      - name: Diagnose generated routing
+        if: always()
+        working-directory: jarvis
+        run: |
+          echo "===== .netlify tree ====="
+          find .netlify -maxdepth 3 -type f 2>/dev/null | head -60 || true
+          echo "===== resolved config (redirects/edge) ====="
+          cat .netlify/v1/config.json 2>/dev/null | head -120 || echo "(no .netlify/v1/config.json)"
+          echo "===== _redirects (if any) ====="
+          find . -maxdepth 4 -name '_redirects' -exec sh -c 'echo "--- {} ---"; cat {}' \; 2>/dev/null || true
+
+      - name: Verify the live site responds
+        if: always()
+        run: |
+          PROD="https://jarvis-jmerritt0119.netlify.app"
+          UNIQUE=$(grep -Eo 'https://[a-z0-9]+--jarvis-jmerritt0119\.netlify\.app' /tmp/deploy.out | tail -1)
+          for u in "$UNIQUE" "$PROD"; do
+            [ -z "$u" ] && continue
+            echo "===== GET $u/ ====="
+            code=$(curl -s -o /tmp/page.html -w '%{http_code}' -m 25 "$u/" || echo "000")
+            echo "HTTP $code"
+            echo "--- first 400 bytes ---"
+            head -c 400 /tmp/page.html; echo
+            echo "--- contains JARVIS? ---"
+            grep -o 'J\.A\.R\.V\.I\.S\.\|JARVIS\|Page not found\|Not Found' /tmp/page.html | head -3 || echo "(no marker)"
+          done
