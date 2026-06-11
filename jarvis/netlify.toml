@@ -1,32 +1,19 @@
 # Netlify configuration for the JARVIS app.
 #
-# This file lives in the jarvis/ folder. When you create the Netlify site,
-# set the site's "Base directory" to `jarvis` so Netlify builds from here.
-# Netlify auto-detects Next.js and applies its Next runtime (App Router,
-# the streaming /api/chat route runs as a serverless function).
+# Architecture: a statically-exported Next.js front-end (published from `out/`)
+# plus a standalone streaming Netlify Function (netlify/functions/chat.mjs)
+# mapped to /api/chat. No Next.js server runtime — rock-solid on Netlify.
 #
-# Required: add ANTHROPIC_API_KEY in Netlify → Site settings →
-# Environment variables (Site configuration → Environment variables).
-#
-# Note: do NOT set `publish` here — the Next.js Runtime v5 manages the
-# publish directory itself. Setting `publish = ".next"` publishes the raw
-# build folder and makes every route 404.
+# Set the site's "Base directory" to `jarvis`. Add ANTHROPIC_API_KEY in the
+# site's environment variables.
 
 [build]
   command = "npm run build"
+  publish = "out"
 
 [build.environment]
   NODE_VERSION = "20"
 
-[[plugins]]
-  package = "@netlify/plugin-nextjs"
-
-# Route every request that isn't a static file to the Next.js server function.
-# The CLI deploy doesn't always apply the runtime's auto-generated catch-all,
-# which left every route 404'ing; this makes it explicit. The function serves
-# both pages and assets.
-[[redirects]]
-  from = "/*"
-  to = "/.netlify/functions/___netlify-server-handler"
-  status = 200
-
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"

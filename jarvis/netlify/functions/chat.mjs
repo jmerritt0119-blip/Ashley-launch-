@@ -1,20 +1,18 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { buildSystemPrompt } from '../../../lib/persona';
+import { buildSystemPrompt } from '../../lib/persona.js';
 
-// Run on the Node.js runtime so the official SDK and process.env work as expected.
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+// Standalone Netlify Function (v2) that powers JARVIS. Mapped to /api/chat so
+// the front-end calls it exactly as before. Streams Claude's reply.
+export const config = { path: '/api/chat' };
 
 const MODEL = process.env.JARVIS_MODEL || 'claude-opus-4-8';
 const ADDRESS = process.env.JARVIS_ADDRESS || 'sir';
-// Live web search is on by default; set JARVIS_WEB_SEARCH=0 to disable.
 const WEB_SEARCH = process.env.JARVIS_WEB_SEARCH !== '0';
 
 // Marker separating the spoken reply from a trailing JSON array of sources.
 // Kept identical in components/Jarvis.jsx.
 const SOURCE_SENTINEL = '\n␞__SRC__␞';
 
-// Pull {title, url} out of any web_search_tool_result blocks in the final message.
 function extractSources(message) {
   const out = [];
   const seen = new Set();
@@ -33,11 +31,14 @@ function extractSources(message) {
   return out;
 }
 
-export async function POST(req) {
+export default async (req) => {
+  if (req.method !== 'POST') {
+    return new Response('Method not allowed', { status: 405 });
+  }
   if (!process.env.ANTHROPIC_API_KEY) {
     return new Response(
-      'My apologies — no API key is configured. Add ANTHROPIC_API_KEY to .env.local and restart me.',
-      { status: 200, headers: { 'Content-Type': 'text/plain; charset=utf-8' } }
+      'My apologies — no API key is configured. Add ANTHROPIC_API_KEY in the site environment variables.',
+      { status: 200, headers: { 'content-type': 'text/plain; charset=utf-8' } }
     );
   }
 
@@ -51,7 +52,6 @@ export async function POST(req) {
   const incoming = Array.isArray(body?.messages) ? body.messages : [];
   const ctx = body?.context && typeof body.context === 'object' ? body.context : {};
 
-  // Normalise to the Messages API shape and drop anything empty.
   const messages = incoming
     .filter((m) => m && (m.role === 'user' || m.role === 'assistant'))
     .map((m) => ({ role: m.role, content: String(m.content ?? '') }))
@@ -63,7 +63,6 @@ export async function POST(req) {
 
   const client = new Anthropic();
   const encoder = new TextEncoder();
-
   const system = buildSystemPrompt(ADDRESS, {
     time: typeof ctx.time === 'string' ? ctx.time.slice(0, 120) : undefined,
     tz: typeof ctx.tz === 'string' ? ctx.tz.slice(0, 60) : undefined,
@@ -74,7 +73,6 @@ export async function POST(req) {
     async start(controller) {
       let emitted = false;
 
-      // Run one streaming attempt. `useTools` toggles the server-side web search tool.
       const attempt = (useTools) =>
         new Promise((resolve, reject) => {
           const run = client.messages.stream({
@@ -83,11 +81,7 @@ export async function POST(req) {
             system,
             messages,
             ...(useTools
-              ? {
-                  tools: [
-                    { type: 'web_search_20260209', name: 'web_search', max_uses: 4 },
-                  ],
-                }
+              ? { tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 4 }] }
               : {}),
           });
           run.on('text', (text) => {
@@ -102,20 +96,15 @@ export async function POST(req) {
         try {
           finalMsg = await attempt(WEB_SEARCH);
         } catch (err) {
-          // If web search isn't available to this account, the request may 400
-          // before any text streams. Fall back to a plain (no-tool) completion.
           if (WEB_SEARCH && !emitted) {
             finalMsg = await attempt(false);
           } else {
             throw err;
           }
         }
-        // Append any web-search sources after the sentinel (not spoken aloud).
         const sources = extractSources(finalMsg);
         if (sources.length) {
-          controller.enqueue(
-            encoder.encode(SOURCE_SENTINEL + JSON.stringify(sources))
-          );
+          controller.enqueue(encoder.encode(SOURCE_SENTINEL + JSON.stringify(sources)));
         }
         controller.close();
       } catch (err) {
@@ -140,8 +129,8 @@ export async function POST(req) {
 
   return new Response(stream, {
     headers: {
-      'Content-Type': 'text/plain; charset=utf-8',
-      'Cache-Control': 'no-cache, no-transform',
+      'content-type': 'text/plain; charset=utf-8',
+      'cache-control': 'no-cache, no-transform',
     },
   });
-}
+};
