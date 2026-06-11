@@ -29,6 +29,13 @@ Claude.
   server-side tool) lets JARVIS answer current questions — news, prices,
   weather, recent events — and the sources appear as glowing HUD chips beneath
   his reply. He also knows your local time and greets you by time of day.
+- **Speaks your language.** JARVIS detects the language you write or speak in
+  and replies in it, choosing a matching voice — automatically.
+- **Live systems dashboard.** A HUD panel with a running clock, battery,
+  network status, and (with permission) **geolocation weather** pulled from
+  Open-Meteo.
+- **Word-synced core.** The reactor pulses on each word he actually speaks,
+  driven by the speech engine's real word-boundary events.
 - **Persistent memory.** Your conversation is remembered across page reloads,
   so JARVIS picks up where you left off. Hit **RESET** to wipe and start fresh.
 - **Holographic distortion.** Subtle RGB-split glitches, a drifting hologram
@@ -116,6 +123,7 @@ jarvis/
 │   ├── Reactor.jsx         # picks the 3D reactor, falls back to 2D
 │   ├── Reactor3D.jsx       # WebGL arc reactor with bloom (Three.js)
 │   ├── ReactorCore.jsx     # 2D canvas arc reactor (fallback)
+│   ├── SystemHud.jsx       # live clock / battery / network / weather gauges
 │   └── Starfield.jsx       # ambient background (canvas)
 └── lib/persona.js          # JARVIS's personality / system prompt
 ```

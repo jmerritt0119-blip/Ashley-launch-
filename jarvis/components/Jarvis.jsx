@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Starfield from './Starfield';
 import Reactor from './Reactor';
+import SystemHud from './SystemHud';
 
 const STATUS_LABEL = {
   idle: 'ONLINE',
@@ -55,6 +56,50 @@ function greetingFor(date = new Date()) {
   return `${part}. Systems online, all faculties nominal. How may I help you, sir?`;
 }
 
+// Map a detected language to a full BCP-47 tag for the speech engine.
+const LANG_TAG = {
+  en: 'en-GB',
+  es: 'es-ES',
+  fr: 'fr-FR',
+  de: 'de-DE',
+  it: 'it-IT',
+  pt: 'pt-PT',
+  ru: 'ru-RU',
+  ja: 'ja-JP',
+  ko: 'ko-KR',
+  zh: 'zh-CN',
+  ar: 'ar-SA',
+  el: 'el-GR',
+  hi: 'hi-IN',
+  he: 'he-IL',
+};
+
+// Lightweight language detection so we can pick a matching TTS voice. Script
+// ranges first (unambiguous), then stop-word checks for Latin-script tongues.
+function detectLang(text) {
+  if (/[぀-ヿ]/.test(text)) return 'ja';
+  if (/[가-힯]/.test(text)) return 'ko';
+  if (/[一-鿿]/.test(text)) return 'zh';
+  if (/[Ѐ-ӿ]/.test(text)) return 'ru';
+  if (/[؀-ۿ]/.test(text)) return 'ar';
+  if (/[Ͱ-Ͽ]/.test(text)) return 'el';
+  if (/[ऀ-ॿ]/.test(text)) return 'hi';
+  if (/[א-ת]/.test(text)) return 'he';
+  const t = ' ' + text.toLowerCase() + ' ';
+  const has = (words) => words.some((w) => t.includes(' ' + w + ' '));
+  if (has(['el', 'la', 'los', 'que', 'de', 'para', 'está', 'gracias', 'hola', 'cómo', 'sí'])) return 'es';
+  if (has(['le', 'les', 'des', 'une', 'est', 'vous', 'bonjour', 'merci', 'oui', 'je'])) return 'fr';
+  if (has(['der', 'die', 'das', 'und', 'ist', 'nicht', 'ich', 'danke', 'hallo', 'sie'])) return 'de';
+  if (has(['il', 'lo', 'che', 'sono', 'grazie', 'ciao', 'per', 'con', 'sì'])) return 'it';
+  if (has(['os', 'uma', 'não', 'obrigado', 'olá', 'você', 'com', 'sim'])) return 'pt';
+  return 'en';
+}
+
+function browserLang() {
+  if (typeof navigator === 'undefined') return 'en-US';
+  return navigator.language || (navigator.languages && navigator.languages[0]) || 'en-US';
+}
+
 export default function Jarvis() {
   const [booted, setBooted] = useState(false);
   const [messages, setMessages] = useState([]);
@@ -82,8 +127,10 @@ export default function Jarvis() {
   const transcriptRef = useRef(null);
   const inputRef = useRef(null);
 
-  // live audio analyser shared with the reactor (no re-renders)
-  const audioRef = useRef({ level: 0, freq: null });
+  // live audio analyser shared with the reactor (no re-renders).
+  // `boundary` ticks up on each spoken-word boundary so the reactor can pulse
+  // in time with JARVIS's actual speech.
+  const audioRef = useRef({ level: 0, freq: null, boundary: 0 });
   const audioCtxRef = useRef(null);
   const audioStreamRef = useRef(null);
   const audioRafRef = useRef(null);
@@ -179,7 +226,7 @@ export default function Jarvis() {
     }
     audioCtxRef.current = null;
     audioStreamRef.current = null;
-    audioRef.current = { level: 0, freq: null };
+    audioRef.current = { level: 0, freq: null, boundary: audioRef.current.boundary || 0 };
   }, []);
 
   // ---- Speech synthesis ---------------------------------------------------
@@ -195,6 +242,18 @@ export default function Jarvis() {
     const enGB = voices.find((v) => v.lang === 'en-GB');
     return enGB || voices.find((v) => v.lang.startsWith('en')) || voices[0];
   }, []);
+
+  // Pick a voice whose language matches the reply; fall back to the default.
+  const voiceForLang = useCallback(
+    (lang) => {
+      if (typeof window === 'undefined' || !window.speechSynthesis) return null;
+      if (lang === 'en') return voiceRef.current || pickVoice();
+      const voices = window.speechSynthesis.getVoices();
+      const match = voices.find((v) => v.lang.toLowerCase().startsWith(lang));
+      return match || voiceRef.current || pickVoice();
+    },
+    [pickVoice]
+  );
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.speechSynthesis) return;
@@ -225,16 +284,25 @@ export default function Jarvis() {
     }
     const text = q.shift();
     const u = new SpeechSynthesisUtterance(text);
-    u.voice = voiceRef.current || pickVoice();
+    // Speak in the reply's own language with a matching voice.
+    const lang = detectLang(text);
+    u.lang = LANG_TAG[lang] || 'en-GB';
+    u.voice = voiceForLang(lang);
     u.rate = 1.02;
     u.pitch = 0.92;
     u.volume = 1;
     u.onstart = () => setStatus('speaking');
+    // Pulse the reactor on every spoken word boundary.
+    u.onboundary = () => {
+      if (audioRef.current) {
+        audioRef.current.boundary = (audioRef.current.boundary || 0) + 1;
+      }
+    };
     u.onend = () => playNext();
     u.onerror = () => playNext();
     window.speechSynthesis.speak(u);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pickVoice]);
+  }, [pickVoice, voiceForLang]);
 
   const enqueueSpeech = useCallback(
     (text) => {
@@ -281,7 +349,7 @@ export default function Jarvis() {
     if (!SR) return;
     setMicSupported(true);
     const rec = new SR();
-    rec.lang = 'en-US';
+    rec.lang = browserLang();
     rec.interimResults = false;
     rec.maxAlternatives = 1;
     rec.continuous = false;
@@ -338,7 +406,7 @@ export default function Jarvis() {
     if (typeof window !== 'undefined' && window.speechSynthesis?.speaking) return;
 
     const rec = new SR();
-    rec.lang = 'en-US';
+    rec.lang = browserLang();
     rec.interimResults = true;
     rec.continuous = true;
     rec.maxAlternatives = 1;
@@ -636,7 +704,7 @@ export default function Jarvis() {
               J.A.R.V.I.S.
             </span>
             <span className="hidden text-xs uppercase tracking-widest text-cyan-200/50 sm:inline">
-              Mark V
+              Mark VI
             </span>
           </div>
           <div className="flex items-center gap-2 text-xs sm:gap-4">
@@ -678,6 +746,7 @@ export default function Jarvis() {
         <div className="flex min-h-0 flex-1 flex-col gap-4 px-4 pb-4 sm:flex-row sm:px-8 sm:pb-6">
           {/* Reactor */}
           <section className="relative flex items-center justify-center sm:w-1/2">
+            <SystemHud />
             <div className="aspect-square w-[min(46vh,92vw)] max-w-[520px]">
               <Reactor status={status} audioRef={audioRef} />
             </div>

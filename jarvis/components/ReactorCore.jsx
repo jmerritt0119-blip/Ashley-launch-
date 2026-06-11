@@ -34,6 +34,8 @@ export default function ReactorCore({ status = 'idle', audioRef = null }) {
     // Smoothed palette values so transitions between states glide.
     let cur = { ...PALETTE.idle, core: [...PALETTE.idle.core], ring: [...PALETTE.idle.ring] };
     let smoothLevel = 0; // eased mic level
+    let lastBoundary = 0;
+    let burst = 0; // decays after each spoken-word boundary
 
     const particles = Array.from({ length: 42 }, (_, i) => ({
       angle: (i / 42) * Math.PI * 2,
@@ -73,15 +75,19 @@ export default function ReactorCore({ status = 'idle', audioRef = null }) {
       const rawLevel = audio ? audio.level || 0 : 0;
       const timeS = t * 0.001;
 
+      // Word-boundary pulses (the engine tells us when each word is spoken).
+      if (audio && audio.boundary !== lastBoundary) {
+        lastBoundary = audio.boundary;
+        burst = 0.85;
+      }
+      burst *= 0.9;
+
       let targetLevel;
       let freqData;
       if (speaking) {
-        // Mimic the cadence of speech: an undulating envelope with syllable bursts.
-        const env =
-          0.35 +
-          0.4 * Math.abs(Math.sin(timeS * 6.3)) * (0.6 + 0.4 * Math.sin(timeS * 2.1)) +
-          0.15 * Math.sin(timeS * 13.0);
-        targetLevel = Math.max(0.05, Math.min(0.55, env * 0.5));
+        // A faint shimmer baseline, punched up on each spoken word.
+        const env = 0.35 + 0.4 * Math.abs(Math.sin(timeS * 6.3)) + 0.15 * Math.sin(timeS * 13.0);
+        targetLevel = Math.max(burst, 0.05, Math.min(0.5, env * 0.4));
         for (let i = 0; i < synthFreq.length; i++) {
           const band = 1 - i / synthFreq.length; // lower frequencies louder
           const wobble =

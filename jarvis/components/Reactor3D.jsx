@@ -163,6 +163,8 @@ export default function Reactor3D({ status = 'idle', audioRef = null }) {
     let curBloom = PALETTE.idle.bloom;
     let curSpin = PALETTE.idle.spin;
     let smoothLevel = 0;
+    let lastBoundary = 0;
+    let burst = 0; // decays after each spoken-word boundary
     let raf;
     const clock = new THREE.Clock();
 
@@ -176,8 +178,18 @@ export default function Reactor3D({ status = 'idle', audioRef = null }) {
       curBloom += (p.bloom - curBloom) * 0.05;
       curSpin += (p.spin - curSpin) * 0.05;
 
-      const level = audioRef && audioRef.current ? audioRef.current.level || 0 : 0;
-      smoothLevel += (level - smoothLevel) * 0.25;
+      const a = audioRef && audioRef.current ? audioRef.current : null;
+      const speaking = statusRef.current === 'speaking';
+      if (a && a.boundary !== lastBoundary) {
+        lastBoundary = a.boundary;
+        burst = 0.85; // a fresh word — punch the core
+      }
+      burst *= 0.9;
+      const micLevel = a ? a.level || 0 : 0;
+      // While speaking, drive from word boundaries (+ a faint shimmer); while
+      // listening, drive from the live mic.
+      const level = speaking ? Math.max(burst, 0.06 + 0.04 * Math.sin(t * 8)) : micLevel;
+      smoothLevel += (level - smoothLevel) * (speaking ? 0.35 : 0.25);
 
       coreMat.color.copy(cur);
       glowMat.color.copy(cur);
