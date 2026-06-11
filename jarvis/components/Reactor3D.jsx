@@ -37,18 +37,43 @@ export default function Reactor3D({ status = 'idle', audioRef = null }) {
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     renderer.setPixelRatio(dpr);
-    renderer.setClearColor(0x000000, 0);
+    // Opaque background that matches the page (--bg). With the bloom compositor
+    // a transparent canvas renders as a hard black box; matching the page colour
+    // and giving the reactor its own starfield makes it seamless + immersive.
+    renderer.setClearColor(0x04080d, 1);
     mount.appendChild(renderer.domElement);
     renderer.domElement.style.display = 'block';
     renderer.domElement.style.width = '100%';
     renderer.domElement.style.height = '100%';
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
-    camera.position.set(0, 0, 6.2);
+    const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 200);
+    camera.position.set(0, 0, 5.6);
 
     const root = new THREE.Group();
     scene.add(root);
+
+    // --- deep starfield (immersive background, parallax) -------------------
+    const STAR_N = 1600;
+    const starPos = new Float32Array(STAR_N * 3);
+    for (let i = 0; i < STAR_N; i++) {
+      starPos[i * 3] = (Math.random() - 0.5) * 80;
+      starPos[i * 3 + 1] = (Math.random() - 0.5) * 55;
+      starPos[i * 3 + 2] = -6 - Math.random() * 55; // behind the reactor
+    }
+    const starGeo = new THREE.BufferGeometry();
+    starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+    const starMat = new THREE.PointsMaterial({
+      color: 0x9fd8ff,
+      size: 0.08,
+      sizeAttenuation: true,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const starfield = new THREE.Points(starGeo, starMat);
+    scene.add(starfield);
 
     // --- core ---------------------------------------------------------------
     const coreMat = new THREE.MeshBasicMaterial({ color: PALETTE.idle.core });
@@ -219,6 +244,10 @@ export default function Reactor3D({ status = 'idle', audioRef = null }) {
       // gentle parallax sway
       root.rotation.y = Math.sin(t * 0.3) * 0.12;
       root.rotation.x = Math.cos(t * 0.22) * 0.08;
+
+      // drifting starfield for depth
+      starfield.rotation.y += 0.00035;
+      starfield.rotation.x = Math.sin(t * 0.05) * 0.03;
 
       composer.render();
       raf = requestAnimationFrame(animate);

@@ -73,12 +73,15 @@ export default async (req) => {
     async start(controller) {
       let emitted = false;
 
-      const attempt = (useTools) =>
+      const attempt = (useTools, useThinking) =>
         new Promise((resolve, reject) => {
           const run = client.messages.stream({
             model: MODEL,
-            max_tokens: useTools ? 2048 : 1500,
+            max_tokens: useTools ? 4096 : 3072,
             system,
+            // Adaptive thinking: Claude reasons more on hard questions, stays
+            // fast on simple ones. Big intelligence boost for free.
+            ...(useThinking ? { thinking: { type: 'adaptive' } } : {}),
             messages,
             ...(useTools
               ? { tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 4 }] }
@@ -94,10 +97,12 @@ export default async (req) => {
       try {
         let finalMsg;
         try {
-          finalMsg = await attempt(WEB_SEARCH);
+          finalMsg = await attempt(WEB_SEARCH, true);
         } catch (err) {
-          if (WEB_SEARCH && !emitted) {
-            finalMsg = await attempt(false);
+          // If anything failed before output (tools or thinking unavailable),
+          // fall back to a plain, guaranteed-compatible completion.
+          if (!emitted) {
+            finalMsg = await attempt(false, false);
           } else {
             throw err;
           }

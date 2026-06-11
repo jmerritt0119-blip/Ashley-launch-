@@ -460,8 +460,14 @@ export default function Jarvis() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) return;
     if (ambientActiveRef.current) return; // already running
-    // Don't listen while JARVIS is speaking (avoid hearing himself).
-    if (typeof window !== 'undefined' && window.speechSynthesis?.speaking) return;
+    // Don't listen while JARVIS is speaking (avoid hearing himself) — but
+    // retry shortly so we resume listening the moment he finishes.
+    if (typeof window !== 'undefined' && window.speechSynthesis?.speaking) {
+      setTimeout(() => {
+        if (ambientOnRef.current) startAmbientRec();
+      }, 350);
+      return;
+    }
 
     const rec = new SR();
     rec.lang = browserLang();
@@ -534,6 +540,7 @@ export default function Jarvis() {
       rec.start();
       ambientRecRef.current = rec;
       ambientActiveRef.current = true;
+      setStatus('listening');
       if (!convoOpenRef.current) setHeardHint('Say “Hey JARVIS”…');
     } catch {
       ambientActiveRef.current = false;
@@ -737,33 +744,33 @@ export default function Jarvis() {
       }
     } catch {}
 
+    const SR =
+      typeof window !== 'undefined' &&
+      (window.SpeechRecognition || window.webkitSpeechRecognition);
+
     if (!wokenRef.current) {
       wokenRef.current = true;
       setNeedsTap(false);
       greetedRef.current = true;
-      if (voiceOutRef.current && firstSpeechRef.current) speak(firstSpeechRef.current);
+      if (SR) {
+        ambientOnRef.current = true; // go hands-free
+        convoOpenRef.current = true;
+      }
+      if (voiceOutRef.current && firstSpeechRef.current) {
+        speak(firstSpeechRef.current); // greeting end -> reopens the mic
+      } else if (SR) {
+        openConversationWindow();
+      }
       return;
     }
 
-    const SR =
-      typeof window !== 'undefined' &&
-      (window.SpeechRecognition || window.webkitSpeechRecognition);
-    const rec = recognitionRef.current;
-    if (!SR || !rec) return;
-
-    if (listening) {
-      try {
-        rec.stop();
-      } catch {}
-      return;
-    }
-    stopSpeaking(); // barge-in if he's mid-sentence
-    try {
-      rec.start();
-      setListening(true);
-      setStatus('listening');
-    } catch {}
-  }, [speak, stopSpeaking, listening]);
+    // Already awake: a tap interrupts him and re-opens the mic immediately.
+    if (!SR) return;
+    stopSpeaking();
+    ambientOnRef.current = true;
+    convoOpenRef.current = true;
+    openConversationWindow();
+  }, [speak, stopSpeaking, openConversationWindow]);
 
   const clearMemory = useCallback(() => {
     if (typeof window !== 'undefined') {
@@ -782,6 +789,11 @@ export default function Jarvis() {
   return (
     <main className="relative h-[100dvh] w-full overflow-hidden">
       <Starfield />
+      {VOICE_ONLY && (
+        <div className="absolute inset-0 z-0">
+          <Reactor status={status} audioRef={audioRef} />
+        </div>
+      )}
       <div className="scanline" />
       <div className="holo-band" />
       <div className="holo-flicker" />
@@ -848,32 +860,24 @@ export default function Jarvis() {
 
         {/* Body */}
         {VOICE_ONLY ? (
-          <div className="flex min-h-0 flex-1 items-center justify-center px-4 pb-10">
-            <button
-              type="button"
-              onClick={handleVoiceTap}
-              className="relative flex select-none flex-col items-center border-0 bg-transparent outline-none"
-              aria-label="Tap to talk to JARVIS"
-            >
-              <div className="aspect-square w-[min(74vh,94vw)] max-w-[680px]">
-                <Reactor status={status} audioRef={audioRef} />
-              </div>
-              <div className="mt-1 h-6 text-center">
-                <p className="hud-mono blink text-xs tracking-[0.3em] text-cyan-200/85 text-glow">
-                  {needsTap
-                    ? '▸ TAP TO WAKE JARVIS'
-                    : !micSupported
-                    ? 'VOICE NEEDS CHROME OR EDGE'
-                    : listening
-                    ? '● LISTENING…'
-                    : status === 'thinking'
-                    ? '… THINKING'
-                    : status === 'speaking'
-                    ? ''
-                    : '▸ TAP & SPEAK'}
-                </p>
-              </div>
-            </button>
+          <div
+            onClick={handleVoiceTap}
+            role="button"
+            tabIndex={0}
+            aria-label="Tap to talk to JARVIS"
+            className="relative min-h-0 w-full flex-1 cursor-pointer select-none"
+          >
+            <p className="pointer-events-none absolute bottom-6 left-1/2 -translate-x-1/2 whitespace-nowrap hud-mono blink text-xs tracking-[0.3em] text-cyan-200/85 text-glow">
+              {needsTap
+                ? '▸ TAP TO WAKE JARVIS'
+                : !micSupported
+                ? 'VOICE NEEDS CHROME OR EDGE'
+                : status === 'thinking'
+                ? '… THINKING'
+                : status === 'speaking'
+                ? ''
+                : '● LISTENING — JUST SPEAK'}
+            </p>
           </div>
         ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-4 px-4 pb-4 sm:flex-row sm:px-8 sm:pb-6">
