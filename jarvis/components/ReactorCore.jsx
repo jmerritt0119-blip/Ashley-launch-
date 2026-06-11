@@ -42,6 +42,10 @@ export default function ReactorCore({ status = 'idle', audioRef = null }) {
       sz: 0.6 + Math.random() * 1.6,
     }));
 
+    // Reusable buffer for synthetic "speech" spectrum while JARVIS talks.
+    const synthFreq = new Uint8Array(96);
+    const synthSeed = synthFreq.map(() => Math.random() * 6.28);
+
     const resize = () => {
       dpr = Math.min(window.devicePixelRatio || 1, 2);
       size = Math.min(canvas.clientWidth, canvas.clientHeight);
@@ -63,11 +67,36 @@ export default function ReactorCore({ status = 'idle', audioRef = null }) {
         cur.ring[i] = lerp(cur.ring[i], target.ring[i], k);
       }
 
-      // live audio
+      // live audio (real mic) or synthetic speech spectrum while speaking
+      const speaking = statusRef.current === 'speaking';
       const audio = audioRef && audioRef.current ? audioRef.current : null;
       const rawLevel = audio ? audio.level || 0 : 0;
-      smoothLevel = lerp(smoothLevel, rawLevel, 0.25);
-      const freq = audio ? audio.freq : null;
+      const timeS = t * 0.001;
+
+      let targetLevel;
+      let freqData;
+      if (speaking) {
+        // Mimic the cadence of speech: an undulating envelope with syllable bursts.
+        const env =
+          0.35 +
+          0.4 * Math.abs(Math.sin(timeS * 6.3)) * (0.6 + 0.4 * Math.sin(timeS * 2.1)) +
+          0.15 * Math.sin(timeS * 13.0);
+        targetLevel = Math.max(0.05, Math.min(0.55, env * 0.5));
+        for (let i = 0; i < synthFreq.length; i++) {
+          const band = 1 - i / synthFreq.length; // lower frequencies louder
+          const wobble =
+            0.5 + 0.5 * Math.sin(timeS * (4 + i * 0.25) + synthSeed[i]);
+          synthFreq[i] = Math.max(
+            0,
+            Math.min(255, targetLevel * 255 * band * (0.4 + 0.9 * wobble))
+          );
+        }
+        freqData = synthFreq;
+      } else {
+        targetLevel = rawLevel;
+        freqData = audio ? audio.freq : null;
+      }
+      smoothLevel = lerp(smoothLevel, targetLevel, speaking ? 0.35 : 0.25);
 
       const C = size / 2;
       const R = size * 0.42;
@@ -95,14 +124,14 @@ export default function ReactorCore({ status = 'idle', audioRef = null }) {
       ctx.arc(0, 0, R * 1.3, 0, Math.PI * 2);
       ctx.fill();
 
-      // live frequency-bar halo (only when we have audio data)
-      if (freq && freq.length) {
+      // live frequency-bar halo (real mic when listening, synthetic when speaking)
+      if (freqData && freqData.length) {
         const bars = 72;
-        const step = Math.max(1, Math.floor(freq.length / bars));
+        const step = Math.max(1, Math.floor(freqData.length / bars));
         ctx.save();
         ctx.rotate(-Math.PI / 2 + time * 0.15);
         for (let i = 0; i < bars; i++) {
-          const v = freq[i * step] / 255; // 0..1
+          const v = freqData[(i * step) % freqData.length] / 255; // 0..1
           if (v < 0.02) continue;
           const a = (i / bars) * Math.PI * 2;
           const inner = R * 1.04;

@@ -15,6 +15,40 @@ const WAKE_WORDS = ['jarvis', 'hey jarvis', 'okay jarvis', 'hey jervis', 'jervis
 // After a reply, stay open for a follow-up without the wake word for this long.
 const CONVERSATION_WINDOW_MS = 9000;
 
+// Marker separating the spoken reply from a trailing JSON array of sources.
+// Kept identical to app/api/chat/route.js.
+const SOURCE_SENTINEL = '\n␞__SRC__␞';
+
+// Persistent memory: JARVIS remembers the conversation across page reloads.
+const STORAGE_KEY = 'jarvis:history:v1';
+const MAX_STORED = 40; // cap persisted messages
+const MAX_CONTEXT = 24; // cap turns sent to the API
+
+function loadHistory() {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || !parsed.length) return null;
+    return parsed
+      .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && m.content)
+      .slice(-MAX_STORED);
+  } catch {
+    return null;
+  }
+}
+
+function saveHistory(messages) {
+  if (typeof window === 'undefined') return;
+  try {
+    const clean = messages
+      .filter((m) => m.content && m.content.trim().length)
+      .slice(-MAX_STORED);
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(clean));
+  } catch {}
+}
+
 function greetingFor(date = new Date()) {
   const h = date.getHours();
   const part = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
@@ -62,21 +96,41 @@ export default function Jarvis() {
   }, [busy]);
 
   // ---- Boot sequence ------------------------------------------------------
+  const restoredRef = useRef(false);
+  const greetedRef = useRef(false);
   useEffect(() => {
-    const greeting = greetingFor();
-    setMessages([{ role: 'assistant', content: greeting }]);
+    const saved = loadHistory();
+    if (saved && saved.length) {
+      restoredRef.current = true;
+      greetedRef.current = true; // don't re-speak restored history
+      setMessages([
+        ...saved,
+        { role: 'assistant', content: 'Welcome back, sir. Picking up where we left off.' },
+      ]);
+    } else {
+      setMessages([{ role: 'assistant', content: greetingFor() }]);
+    }
     const t = setTimeout(() => setBooted(true), 2600);
     return () => clearTimeout(t);
   }, []);
 
-  const greetedRef = useRef(false);
   useEffect(() => {
     if (booted && voiceOut && !greetedRef.current && messages[0]) {
       greetedRef.current = true;
       speak(messages[0].content);
+    } else if (booted && voiceOut && restoredRef.current && messages.length) {
+      // Speak the short "welcome back" line once after a restore.
+      restoredRef.current = false;
+      speak(messages[messages.length - 1].content);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [booted]);
+
+  // Persist conversation whenever it settles (not mid-stream).
+  useEffect(() => {
+    if (!booted || busy) return;
+    if (messages.length) saveHistory(messages);
+  }, [messages, busy, booted]);
 
   // ---- Live audio analyser ------------------------------------------------
   const startAnalyser = useCallback(async () => {
@@ -398,7 +452,7 @@ export default function Jarvis() {
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: history, context }),
+          body: JSON.stringify({ messages: history.slice(-MAX_CONTEXT), context }),
         });
         if (!res.ok || !res.body) throw new Error('Request failed');
 
@@ -410,15 +464,39 @@ export default function Jarvis() {
           const { done, value } = await reader.read();
           if (done) break;
           acc += decoder.decode(value, { stream: true });
+          const cut = acc.indexOf(SOURCE_SENTINEL);
+          const visible = cut >= 0 ? acc.slice(0, cut) : acc;
           setMessages((prev) => {
             const next = prev.slice();
-            next[next.length - 1] = { role: 'assistant', content: acc };
+            next[next.length - 1] = { role: 'assistant', content: visible };
             return next;
           });
         }
 
-        if (voiceOutRef.current && acc) {
-          speak(acc); // onend resumes ambient listening
+        // Split the spoken reply from any trailing source list.
+        let spokenText = acc;
+        let sources = [];
+        const cut = acc.indexOf(SOURCE_SENTINEL);
+        if (cut >= 0) {
+          spokenText = acc.slice(0, cut);
+          try {
+            sources = JSON.parse(acc.slice(cut + SOURCE_SENTINEL.length));
+          } catch {
+            sources = [];
+          }
+        }
+        setMessages((prev) => {
+          const next = prev.slice();
+          next[next.length - 1] = {
+            role: 'assistant',
+            content: spokenText,
+            ...(sources.length ? { sources } : {}),
+          };
+          return next;
+        });
+
+        if (voiceOutRef.current && spokenText) {
+          speak(spokenText); // onend resumes ambient listening
         } else {
           setStatus('idle');
           if (ambientOnRef.current) openConversationWindow();
@@ -465,11 +543,26 @@ export default function Jarvis() {
     send(input);
   };
 
+  const clearMemory = useCallback(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        window.localStorage.removeItem(STORAGE_KEY);
+      } catch {}
+    }
+    stopSpeaking();
+    restoredRef.current = false;
+    const greeting = greetingFor();
+    setMessages([{ role: 'assistant', content: greeting }]);
+    if (voiceOutRef.current) speak(greeting);
+  }, [stopSpeaking, speak]);
+
   // ---- Render -------------------------------------------------------------
   return (
     <main className="relative h-[100dvh] w-full overflow-hidden">
       <Starfield />
       <div className="scanline" />
+      <div className="holo-band" />
+      <div className="holo-flicker" />
 
       <div
         className="pointer-events-none absolute inset-0"
@@ -485,11 +578,11 @@ export default function Jarvis() {
         {/* Top status bar */}
         <header className="flex items-center justify-between px-5 py-4 sm:px-8">
           <div className="flex items-center gap-3">
-            <span className="hud-mono text-lg font-bold tracking-[0.35em] text-glow text-[var(--cyan)] sm:text-2xl">
+            <span className="glitch hud-mono text-lg font-bold tracking-[0.35em] text-glow text-[var(--cyan)] sm:text-2xl">
               J.A.R.V.I.S.
             </span>
             <span className="hidden text-xs uppercase tracking-widest text-cyan-200/50 sm:inline">
-              Mark III
+              Mark IV
             </span>
           </div>
           <div className="flex items-center gap-2 text-xs sm:gap-4">
@@ -516,6 +609,13 @@ export default function Jarvis() {
               title="Toggle voice output"
             >
               VOICE {voiceOut ? 'ON' : 'OFF'}
+            </button>
+            <button
+              onClick={clearMemory}
+              className="hud-mono hidden rounded border border-cyan-300/30 px-2 py-1 tracking-widest text-cyan-200/60 transition hover:border-amber-300/60 hover:text-amber-200 sm:block"
+              title="Forget this conversation and start fresh"
+            >
+              RESET
             </button>
           </div>
         </header>
@@ -553,7 +653,7 @@ export default function Jarvis() {
                 className="scroll-thin min-h-0 flex-1 space-y-4 overflow-y-auto pr-2"
               >
                 {messages.map((m, i) => (
-                  <Bubble key={i} role={m.role} content={m.content} />
+                  <Bubble key={i} role={m.role} content={m.content} sources={m.sources} />
                 ))}
                 {busy && messages[messages.length - 1]?.content === '' && <Thinking />}
               </div>
@@ -597,7 +697,7 @@ export default function Jarvis() {
             </div>
 
             <p className="mt-2 text-center text-[10px] tracking-widest text-cyan-200/30 sm:text-left">
-              POWERED BY CLAUDE ·{' '}
+              POWERED BY CLAUDE · MEMORY PERSISTENT ·{' '}
               {ambient
                 ? 'HANDS-FREE — SAY “HEY JARVIS”'
                 : micSupported
@@ -630,7 +730,7 @@ function StatusPill({ status }) {
   );
 }
 
-function Bubble({ role, content }) {
+function Bubble({ role, content, sources }) {
   const isUser = role === 'user';
   return (
     <div className={`rise-in flex ${isUser ? 'justify-end' : 'justify-start'}`}>
@@ -645,9 +745,41 @@ function Bubble({ role, content }) {
           <span className="hud-mono mb-1 block text-[9px] tracking-[0.3em] text-cyan-300/50">JARVIS</span>
         )}
         <span className="whitespace-pre-wrap">{content || ' '}</span>
+        {Array.isArray(sources) && sources.length > 0 && (
+          <div className="mt-2.5 border-t border-cyan-300/15 pt-2">
+            <span className="hud-mono mb-1.5 block text-[8px] tracking-[0.3em] text-cyan-300/40">
+              SOURCES
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {sources.map((s, i) => (
+                <a
+                  key={i}
+                  href={s.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="src-chip"
+                  title={s.url}
+                >
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-cyan-300/70" />
+                  <span className="truncate" style={{ maxWidth: '180px' }}>
+                    {hostOf(s.url)}
+                  </span>
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
+}
+
+function hostOf(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url;
+  }
 }
 
 function Thinking() {

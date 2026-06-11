@@ -21,9 +21,14 @@ Claude.
   the core and a halo of frequency bars physically pulse to your real voice in
   real time. It also shifts colour by state — green listening, amber thinking,
   blue speaking.
-- **Real-world knowledge.** Live web search (Claude's server-side tool) lets
-  JARVIS answer current questions — news, prices, weather, recent events. He
-  also knows your local time and greets you by time of day.
+- **Real-world knowledge, with receipts.** Live web search (Claude's
+  server-side tool) lets JARVIS answer current questions — news, prices,
+  weather, recent events — and the sources appear as glowing HUD chips beneath
+  his reply. He also knows your local time and greets you by time of day.
+- **Persistent memory.** Your conversation is remembered across page reloads,
+  so JARVIS picks up where you left off. Hit **RESET** to wipe and start fresh.
+- **Holographic distortion.** Subtle RGB-split glitches, a drifting hologram
+  band, and flicker give it that projected-from-a-reactor feel.
 - **The JARVIS persona.** Composed, witty, proactive — defined in
   `lib/persona.js`, easy to retune.
 

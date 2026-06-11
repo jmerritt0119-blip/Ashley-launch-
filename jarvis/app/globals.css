@@ -121,3 +121,81 @@ body {
 .dot { animation: dot 1.2s ease-in-out infinite; }
 .dot:nth-child(2) { animation-delay: 0.15s; }
 .dot:nth-child(3) { animation-delay: 0.3s; }
+
+/* ---- Holographic distortion / glitch ------------------------------------- */
+
+/* Brief RGB-split glitch on the title — fires for a beat every few seconds */
+@keyframes glitch {
+  0%, 96%, 100% {
+    transform: none;
+    text-shadow: 0 0 8px rgba(125, 249, 255, 0.55), 0 0 22px rgba(57, 199, 255, 0.35);
+  }
+  96.5% { transform: translateX(-2px) skewX(-6deg); text-shadow: 2px 0 #ff2fd0, -2px 0 #00fff9; }
+  97.5% { transform: translateX(2px) skewX(4deg); text-shadow: -2px 0 #ff2fd0, 2px 0 #00fff9; }
+  98.5% { transform: translateX(-1px); text-shadow: 1px 0 #ff2fd0, -1px 0 #00fff9; }
+}
+.glitch { animation: glitch 5.5s infinite; }
+
+/* A faint hologram flicker washing over the whole interface */
+@keyframes holo-flicker {
+  0%, 100% { opacity: 0; }
+  90% { opacity: 0; }
+  91% { opacity: 0.05; }
+  92% { opacity: 0; }
+  96% { opacity: 0.04; }
+  97% { opacity: 0; }
+}
+.holo-flicker {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(rgba(125, 249, 255, 0.6), rgba(57, 199, 255, 0.05));
+  mix-blend-mode: screen;
+  animation: holo-flicker 7s infinite;
+}
+
+/* A distortion band that drifts down the screen, displacing a slice of the HUD */
+@keyframes holo-band {
+  0% { top: -12%; opacity: 0; }
+  8% { opacity: 0.5; }
+  92% { opacity: 0.5; }
+  100% { top: 108%; opacity: 0; }
+}
+.holo-band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 10%;
+  pointer-events: none;
+  background: linear-gradient(
+    rgba(125, 249, 255, 0) 0%,
+    rgba(125, 249, 255, 0.05) 45%,
+    rgba(180, 240, 255, 0.09) 50%,
+    rgba(125, 249, 255, 0.05) 55%,
+    rgba(125, 249, 255, 0) 100%
+  );
+  backdrop-filter: hue-rotate(20deg) contrast(1.05);
+  -webkit-backdrop-filter: hue-rotate(20deg) contrast(1.05);
+  animation: holo-band 9s linear infinite;
+}
+
+/* Source chips that appear under a JARVIS reply after a web search */
+.src-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 9px;
+  border: 1px solid rgba(125, 249, 255, 0.3);
+  border-radius: 999px;
+  background: rgba(125, 249, 255, 0.06);
+  color: rgba(207, 238, 251, 0.85);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  transition: border-color 0.15s, background 0.15s;
+}
+.src-chip:hover {
+  border-color: rgba(125, 249, 255, 0.7);
+  background: rgba(125, 249, 255, 0.12);
+}

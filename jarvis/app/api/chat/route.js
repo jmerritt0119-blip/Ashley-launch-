@@ -10,6 +10,29 @@ const ADDRESS = process.env.JARVIS_ADDRESS || 'sir';
 // Live web search is on by default; set JARVIS_WEB_SEARCH=0 to disable.
 const WEB_SEARCH = process.env.JARVIS_WEB_SEARCH !== '0';
 
+// Marker separating the spoken reply from a trailing JSON array of sources.
+// Kept identical in components/Jarvis.jsx.
+const SOURCE_SENTINEL = '\n␞__SRC__␞';
+
+// Pull {title, url} out of any web_search_tool_result blocks in the final message.
+function extractSources(message) {
+  const out = [];
+  const seen = new Set();
+  const blocks = Array.isArray(message?.content) ? message.content : [];
+  for (const block of blocks) {
+    if (block?.type !== 'web_search_tool_result') continue;
+    const results = Array.isArray(block.content) ? block.content : [];
+    for (const r of results) {
+      if (r?.type === 'web_search_result' && r.url && !seen.has(r.url)) {
+        seen.add(r.url);
+        out.push({ title: String(r.title || r.url).slice(0, 120), url: String(r.url) });
+        if (out.length >= 5) return out;
+      }
+    }
+  }
+  return out;
+}
+
 export async function POST(req) {
   if (!process.env.ANTHROPIC_API_KEY) {
     return new Response(
@@ -75,16 +98,24 @@ export async function POST(req) {
         });
 
       try {
+        let finalMsg;
         try {
-          await attempt(WEB_SEARCH);
+          finalMsg = await attempt(WEB_SEARCH);
         } catch (err) {
           // If web search isn't available to this account, the request may 400
           // before any text streams. Fall back to a plain (no-tool) completion.
           if (WEB_SEARCH && !emitted) {
-            await attempt(false);
+            finalMsg = await attempt(false);
           } else {
             throw err;
           }
+        }
+        // Append any web-search sources after the sentinel (not spoken aloud).
+        const sources = extractSources(finalMsg);
+        if (sources.length) {
+          controller.enqueue(
+            encoder.encode(SOURCE_SENTINEL + JSON.stringify(sources))
+          );
         }
         controller.close();
       } catch (err) {
