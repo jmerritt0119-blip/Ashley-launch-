@@ -1,0 +1,70 @@
+name: Deploy JARVIS
+
+# Runs on GitHub's servers (which can reach Netlify) and deploys the jarvis/
+# app to Netlify. Trigger it manually from the Actions tab, or let Claude
+# trigger it. Requires two repository secrets:
+#   NETLIFY_AUTH_TOKEN  – a Netlify personal access token
+#   ANTHROPIC_API_KEY   – your Anthropic API key (so JARVIS can answer)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+      SITE_NAME: jarvis-jmerritt0119
+      ACCOUNT_SLUG: jmerritt0119
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Check required secret
+        run: |
+          if [ -z "$NETLIFY_AUTH_TOKEN" ]; then
+            echo "::error::NETLIFY_AUTH_TOKEN secret is not set. Add it under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+
+      - name: Install Netlify CLI
+        run: npm install -g netlify-cli@26
+
+      - name: Ensure Netlify site exists
+        run: |
+          set -e
+          netlify sites:create --name "$SITE_NAME" --account-slug "$ACCOUNT_SLUG" 2>/dev/null \
+            || echo "site create skipped (already exists, or name taken)"
+          SITE_ID=$(netlify api listSites | jq -r --arg n "$SITE_NAME" '[.[] | select(.name==$n)][0].id // empty')
+          if [ -z "$SITE_ID" ]; then
+            echo "::error::Could not find or create a site named $SITE_NAME (name may be taken globally). Change SITE_NAME in the workflow."
+            exit 1
+          fi
+          echo "NETLIFY_SITE_ID=$SITE_ID" >> "$GITHUB_ENV"
+          echo "Using Netlify site id: $SITE_ID"
+
+      - name: Set runtime environment variable
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -n "$ANTHROPIC_API_KEY" ]; then
+            netlify env:set ANTHROPIC_API_KEY "$ANTHROPIC_API_KEY" --site "$NETLIFY_SITE_ID" --force >/dev/null
+            echo "ANTHROPIC_API_KEY configured on the site."
+          else
+            echo "::warning::ANTHROPIC_API_KEY secret not set - JARVIS will load but won't answer until you add it."
+          fi
+
+      - name: Install app dependencies
+        working-directory: jarvis
+        run: npm ci || npm install
+
+      - name: Build and deploy to production
+        working-directory: jarvis
+        run: |
+          set -o pipefail
+          netlify deploy --build --prod --site "$NETLIFY_SITE_ID" | tee /tmp/deploy.out
+          echo "================ LIVE URL ================"
+          grep -Eo 'https://[a-zA-Z0-9.-]+\.netlify\.app' /tmp/deploy.out | tail -1 || true
