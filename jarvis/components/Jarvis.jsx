@@ -16,6 +16,11 @@ const WAKE_WORDS = ['jarvis', 'hey jarvis', 'okay jarvis', 'hey jervis', 'jervis
 // After a reply, stay open for a follow-up without the wake word for this long.
 const CONVERSATION_WINDOW_MS = 9000;
 
+// Pure voice experience: no transcript, no text field. Open → tap once → talk.
+// The reactor's colour conveys state (green listening, amber thinking, blue
+// speaking). Set to false to restore the full chat interface.
+const VOICE_ONLY = true;
+
 // Marker separating the spoken reply from a trailing JSON array of sources.
 // Kept identical to app/api/chat/route.js.
 const SOURCE_SENTINEL = '\n␞__SRC__␞';
@@ -178,12 +183,29 @@ export default function Jarvis() {
         }
       } catch {}
       setNeedsTap(false);
+
+      // Voice-only: go hands-free the moment he's woken.
+      const SR =
+        typeof window !== 'undefined' &&
+        (window.SpeechRecognition || window.webkitSpeechRecognition);
+      if (VOICE_ONLY && SR) {
+        ambientOnRef.current = true;
+        setAmbient(true);
+        convoOpenRef.current = true;
+        startAnalyser();
+      }
+
+      const willGreet = !greetedRef.current && voiceOutRef.current && firstSpeechRef.current;
       if (!greetedRef.current) {
         greetedRef.current = true;
-        if (voiceOutRef.current && firstSpeechRef.current) {
-          speak(firstSpeechRef.current);
-        }
+        if (willGreet) speak(firstSpeechRef.current);
       }
+      // Start listening now if there's no greeting to wait on; otherwise the
+      // greeting's end re-opens the mic (playNext -> openConversationWindow).
+      if (VOICE_ONLY && SR && !willGreet) {
+        startAmbientRec();
+      }
+
       window.removeEventListener('pointerdown', unlock, true);
       window.removeEventListener('keydown', unlock, true);
       window.removeEventListener('touchend', unlock, true);
@@ -196,6 +218,7 @@ export default function Jarvis() {
       window.removeEventListener('keydown', unlock, true);
       window.removeEventListener('touchend', unlock, true);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [speak]);
 
   // Persist conversation whenever it settles (not mid-stream).
@@ -359,10 +382,13 @@ export default function Jarvis() {
   const openConversationWindow = useCallback(() => {
     convoOpenRef.current = true;
     if (convoTimerRef.current) clearTimeout(convoTimerRef.current);
-    convoTimerRef.current = setTimeout(() => {
-      convoOpenRef.current = false;
-      setHeardHint('');
-    }, CONVERSATION_WINDOW_MS);
+    // In voice-only mode we listen continuously — the window never expires.
+    if (!VOICE_ONLY) {
+      convoTimerRef.current = setTimeout(() => {
+        convoOpenRef.current = false;
+        setHeardHint('');
+      }, CONVERSATION_WINDOW_MS);
+    }
     setHeardHint('Listening…');
     startAmbientRec();
   }, []);
@@ -462,8 +488,8 @@ export default function Jarvis() {
       }
       if (cut >= 0) {
         command = finalText.slice(cut + cutWord.length).replace(/^[\s,.:!?-]+/, '').trim();
-      } else if (convoOpenRef.current) {
-        // Inside a follow-up window — no wake word required.
+      } else if (convoOpenRef.current || VOICE_ONLY) {
+        // Follow-up window (or voice-only mode) — no wake word required.
         command = finalText.trim();
       }
 
@@ -728,10 +754,13 @@ export default function Jarvis() {
             <span className="glitch hud-mono text-lg font-bold tracking-[0.35em] text-glow text-[var(--cyan)] sm:text-2xl">
               J.A.R.V.I.S.
             </span>
-            <span className="hidden text-xs uppercase tracking-widest text-cyan-200/50 sm:inline">
-              Mark VI
-            </span>
+            {!VOICE_ONLY && (
+              <span className="hidden text-xs uppercase tracking-widest text-cyan-200/50 sm:inline">
+                Mark VI
+              </span>
+            )}
           </div>
+          {!VOICE_ONLY && (
           <div className="flex items-center gap-2 text-xs sm:gap-4">
             <StatusPill status={status} />
             {micSupported && (
@@ -765,9 +794,30 @@ export default function Jarvis() {
               RESET
             </button>
           </div>
+          )}
         </header>
 
-        {/* Body: reactor + transcript */}
+        {/* Body */}
+        {VOICE_ONLY ? (
+          <div className="flex min-h-0 flex-1 items-center justify-center px-4 pb-10">
+            <div className="relative flex flex-col items-center">
+              <div className="aspect-square w-[min(74vh,94vw)] max-w-[680px]">
+                <Reactor status={status} audioRef={audioRef} />
+              </div>
+              <div className="mt-1 h-6 text-center">
+                {needsTap ? (
+                  <p className="hud-mono blink text-xs tracking-[0.35em] text-cyan-200/90 text-glow">
+                    ▸ TAP TO WAKE JARVIS
+                  </p>
+                ) : !micSupported ? (
+                  <p className="hud-mono text-[11px] tracking-[0.2em] text-amber-300/80">
+                    VOICE CONTROL NEEDS CHROME OR EDGE
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-4 px-4 pb-4 sm:flex-row sm:px-8 sm:pb-6">
           {/* Reactor */}
           <section className="relative flex items-center justify-center sm:w-1/2">
@@ -858,6 +908,7 @@ export default function Jarvis() {
             </p>
           </section>
         </div>
+        )}
       </div>
     </main>
   );
