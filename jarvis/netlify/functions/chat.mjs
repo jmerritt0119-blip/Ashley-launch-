@@ -170,15 +170,32 @@ export default async (req) => {
         controller.close();
       } catch (err) {
         const status = err?.status;
+        const raw = (
+          err?.error?.error?.message ||
+          err?.error?.message ||
+          err?.message ||
+          ''
+        ).toString();
+        const low = raw.toLowerCase();
         let message;
-        if (status === 401) {
-          message = 'My credentials were rejected — the API key appears to be invalid.';
+        if (status === 401 || low.includes('authentication') || low.includes('x-api-key')) {
+          message =
+            'My credentials were rejected, sir. The Anthropic API key appears to be invalid — please double-check it in the site settings.';
+        } else if (status === 402 || low.includes('credit') || low.includes('balance') || low.includes('billing')) {
+          message =
+            'My core is starved for power, sir: the Anthropic account is out of credit. Add a little billing credit in the Anthropic console, then try me again.';
+        } else if (status === 404 || (low.includes('model') && (low.includes('not') || low.includes('found')))) {
+          message = `That model is not available on this account. ${raw.slice(0, 120)}`;
+        } else if (status === 403) {
+          message = `Access was denied. ${raw.slice(0, 120)}`;
         } else if (status === 429) {
-          message = 'We are being rate limited at the moment. A short pause should clear it.';
+          message = 'We are being rate limited at the moment, sir. A short pause should clear it.';
         } else if (status === 529 || status === 500) {
           message = 'The service is briefly overloaded. Do try me again in a moment.';
         } else {
-          message = 'I encountered an unexpected fault while thinking that through.';
+          message = raw
+            ? `I hit a fault, sir: ${raw.slice(0, 150)}`
+            : 'I encountered an unexpected fault.';
         }
         try {
           if (!emitted) controller.enqueue(encoder.encode(message));
