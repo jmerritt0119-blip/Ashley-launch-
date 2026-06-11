@@ -151,6 +151,7 @@ export default function Jarvis() {
   // ---- Boot sequence ------------------------------------------------------
   const restoredRef = useRef(false);
   const greetedRef = useRef(false);
+  const wokenRef = useRef(false); // voice-only: has the first wake tap happened
   const firstSpeechRef = useRef(''); // what JARVIS says on the first wake
   useEffect(() => {
     const saved = loadHistory();
@@ -172,6 +173,8 @@ export default function Jarvis() {
   // (especially on mobile). On the first tap/keypress we "wake" JARVIS: unlock
   // the audio engine and speak his greeting.
   useEffect(() => {
+    // Voice-only handles its own wake via the tappable reactor (handleVoiceTap).
+    if (VOICE_ONLY) return;
     const unlock = () => {
       try {
         const ss = window.speechSynthesis;
@@ -720,6 +723,48 @@ export default function Jarvis() {
     send(input);
   };
 
+  // Voice-only: the reactor IS the control. First tap wakes + greets; after
+  // that, each tap starts a one-shot listen (reliable everywhere, unlike
+  // always-on recognition). Tapping while he talks interrupts and listens.
+  const handleVoiceTap = useCallback(() => {
+    try {
+      const ss = window.speechSynthesis;
+      if (ss) {
+        ss.resume();
+        const primer = new SpeechSynthesisUtterance(' ');
+        primer.volume = 0;
+        ss.speak(primer);
+      }
+    } catch {}
+
+    if (!wokenRef.current) {
+      wokenRef.current = true;
+      setNeedsTap(false);
+      greetedRef.current = true;
+      if (voiceOutRef.current && firstSpeechRef.current) speak(firstSpeechRef.current);
+      return;
+    }
+
+    const SR =
+      typeof window !== 'undefined' &&
+      (window.SpeechRecognition || window.webkitSpeechRecognition);
+    const rec = recognitionRef.current;
+    if (!SR || !rec) return;
+
+    if (listening) {
+      try {
+        rec.stop();
+      } catch {}
+      return;
+    }
+    stopSpeaking(); // barge-in if he's mid-sentence
+    try {
+      rec.start();
+      setListening(true);
+      setStatus('listening');
+    } catch {}
+  }, [speak, stopSpeaking, listening]);
+
   const clearMemory = useCallback(() => {
     if (typeof window !== 'undefined') {
       try {
@@ -804,22 +849,31 @@ export default function Jarvis() {
         {/* Body */}
         {VOICE_ONLY ? (
           <div className="flex min-h-0 flex-1 items-center justify-center px-4 pb-10">
-            <div className="relative flex flex-col items-center">
+            <button
+              type="button"
+              onClick={handleVoiceTap}
+              className="relative flex select-none flex-col items-center border-0 bg-transparent outline-none"
+              aria-label="Tap to talk to JARVIS"
+            >
               <div className="aspect-square w-[min(74vh,94vw)] max-w-[680px]">
                 <Reactor status={status} audioRef={audioRef} />
               </div>
               <div className="mt-1 h-6 text-center">
-                {needsTap ? (
-                  <p className="hud-mono blink text-xs tracking-[0.35em] text-cyan-200/90 text-glow">
-                    ▸ TAP TO WAKE JARVIS
-                  </p>
-                ) : !micSupported ? (
-                  <p className="hud-mono text-[11px] tracking-[0.2em] text-amber-300/80">
-                    VOICE CONTROL NEEDS CHROME OR EDGE
-                  </p>
-                ) : null}
+                <p className="hud-mono blink text-xs tracking-[0.3em] text-cyan-200/85 text-glow">
+                  {needsTap
+                    ? '▸ TAP TO WAKE JARVIS'
+                    : !micSupported
+                    ? 'VOICE NEEDS CHROME OR EDGE'
+                    : listening
+                    ? '● LISTENING…'
+                    : status === 'thinking'
+                    ? '… THINKING'
+                    : status === 'speaking'
+                    ? ''
+                    : '▸ TAP & SPEAK'}
+                </p>
               </div>
-            </div>
+            </button>
           </div>
         ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-4 px-4 pb-4 sm:flex-row sm:px-8 sm:pb-6">
