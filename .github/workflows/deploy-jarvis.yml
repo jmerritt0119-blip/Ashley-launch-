@@ -87,14 +87,17 @@ jobs:
         if: always()
         run: |
           PROD="https://jarvis-jmerritt0119.netlify.app"
-          UNIQUE=$(grep -Eo 'https://[a-z0-9]+--jarvis-jmerritt0119\.netlify\.app' /tmp/deploy.out | tail -1)
-          for u in "$UNIQUE" "$PROD"; do
-            [ -z "$u" ] && continue
+          ok=0
+          for u in "$PROD"; do
             echo "===== GET $u/ ====="
             code=$(curl -s -o /tmp/page.html -w '%{http_code}' -m 25 "$u/" || echo "000")
             echo "HTTP $code"
             echo "--- first 400 bytes ---"
             head -c 400 /tmp/page.html; echo
-            echo "--- contains JARVIS? ---"
-            grep -o 'J\.A\.R\.V\.I\.S\.\|JARVIS\|Page not found\|Not Found' /tmp/page.html | head -3 || echo "(no marker)"
+            if grep -q 'J\.A\.R\.V\.I\.S\.\|JARVIS' /tmp/page.html; then ok=1; echo "✓ JARVIS markup present"; fi
+            echo "===== GET $u/api/chat (expect non-404) ====="
+            acode=$(curl -s -o /dev/null -w '%{http_code}' -m 25 -X POST -H 'content-type: application/json' --data '{"messages":[]}' "$u/api/chat" || echo "000")
+            echo "api/chat HTTP $acode"
           done
+          if [ "$ok" != "1" ]; then echo "::error::Root still not serving JARVIS"; exit 1; fi
+          echo "✅ Site is serving JARVIS"
