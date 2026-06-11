@@ -234,6 +234,23 @@ export default function Jarvis() {
     if (messages.length) saveHistory(messages);
   }, [messages, busy, booted]);
 
+  // Mac pairing: visiting ?pair=CODE links this device once; we remember it and
+  // send it with each request so JARVIS can dispatch actions to the Mac agent.
+  const pairRef = useRef('');
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const url = new URL(window.location.href);
+      const fromUrl = url.searchParams.get('pair');
+      if (fromUrl) {
+        window.localStorage.setItem('jarvis:pair', fromUrl.trim());
+        url.searchParams.delete('pair');
+        window.history.replaceState({}, '', url.toString());
+      }
+      pairRef.current = window.localStorage.getItem('jarvis:pair') || '';
+    } catch {}
+  }, []);
+
   // ---- Live audio analyser ------------------------------------------------
   const startAnalyser = useCallback(async () => {
     if (audioCtxRef.current) return;
@@ -611,7 +628,7 @@ export default function Jarvis() {
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: history.slice(-MAX_CONTEXT), context }),
+          body: JSON.stringify({ messages: history.slice(-MAX_CONTEXT), context, pairCode: pairRef.current }),
         });
         if (!res.ok || !res.body) throw new Error('Request failed');
 

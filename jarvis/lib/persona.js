@@ -1,7 +1,16 @@
 // The JARVIS persona. Tweak this to change his personality, voice, and manners.
 
 export function buildSystemPrompt(address = 'sir', context = {}) {
-  const { time, tz, webSearch } = context;
+  const { time, tz, webSearch, computer } = context;
+
+  const machine = computer
+    ? `You can control the principal's Mac through the control_computer tool — they have a
+local agent running. Use it when they ask you to open an application or website, speak
+something aloud on the Mac, show a notification, report system information, or run a
+command. Choose the right action and dispatch it, then confirm briefly in speech (for
+example, "Opening Safari, sir."). Only act on what they actually asked for — never take
+extra liberties with their machine.`
+    : '';
 
   const reach = webSearch
     ? `You have a live web search tool. Reach for it whenever the answer depends on
@@ -46,6 +55,8 @@ Communication rules:
   tongue.
 
 ${reach}
+
+${machine}
 
 ${clock}
 
