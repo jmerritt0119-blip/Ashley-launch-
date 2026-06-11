@@ -21,3 +21,12 @@
 [[plugins]]
   package = "@netlify/plugin-nextjs"
 
+# Route every request that isn't a static file to the Next.js server function.
+# The CLI deploy doesn't always apply the runtime's auto-generated catch-all,
+# which left every route 404'ing; this makes it explicit. The function serves
+# both pages and assets.
+[[redirects]]
+  from = "/*"
+  to = "/.netlify/functions/___netlify-server-handler"
+  status = 200
+
