@@ -17,10 +17,14 @@ Claude.
   back-and-forth conversation, no buttons.
 - **Push-to-talk or type.** Prefer control? Tap the mic for one-shot voice, or
   use the full text chat with live, streaming responses.
-- **A genuinely live arc reactor.** The Web Audio API taps your microphone, so
-  the core and a halo of frequency bars physically pulse to your real voice in
-  real time. It also shifts colour by state — green listening, amber thinking,
-  blue speaking.
+- **A true 3D holographic reactor.** A WebGL arc reactor with volumetric
+  **bloom**, gimbal rings, a particle shell and depth/parallax — and it pulses
+  to live audio: your voice while you speak, his voice while he replies. Colour
+  shifts by state (green listening, amber thinking, blue speaking). Devices
+  without WebGL fall back to a 2D canvas reactor automatically.
+- **Streaming speech.** JARVIS starts talking sentence-by-sentence *as the
+  reply is still arriving*, instead of waiting for the whole thing — so he
+  responds almost instantly.
 - **Real-world knowledge, with receipts.** Live web search (Claude's
   server-side tool) lets JARVIS answer current questions — news, prices,
   weather, recent events — and the sources appear as glowing HUD chips beneath
@@ -93,8 +97,9 @@ talking. Edit the list in `components/Jarvis.jsx` (`WAKE_WORDS`).
 - **Next.js 14** (App Router) + **React** + **Tailwind CSS**
 - **`@anthropic-ai/sdk`** streaming from a server route (`app/api/chat/route.js`),
   with Claude's server-side **web search** tool for live knowledge
-- Canvas-rendered arc reactor and starfield — no animation libraries
-- **Web Speech API** for voice in/out and the wake word
+- **Three.js** WebGL reactor with `UnrealBloomPass` (lazy-loaded, with a 2D
+  canvas fallback); canvas starfield for ambience
+- **Web Speech API** for streaming voice in/out and the wake word
 - **Web Audio API** (`AnalyserNode`) for real-time, audio-reactive visuals
 
 ## Project layout
@@ -107,8 +112,10 @@ jarvis/
 │   ├── page.jsx
 │   └── globals.css         # HUD styling + animations
 ├── components/
-│   ├── Jarvis.jsx          # the whole interface: chat, voice, state
-│   ├── ReactorCore.jsx     # the animated arc reactor (canvas)
+│   ├── Jarvis.jsx          # the whole interface: chat, voice, memory, state
+│   ├── Reactor.jsx         # picks the 3D reactor, falls back to 2D
+│   ├── Reactor3D.jsx       # WebGL arc reactor with bloom (Three.js)
+│   ├── ReactorCore.jsx     # 2D canvas arc reactor (fallback)
 │   └── Starfield.jsx       # ambient background (canvas)
 └── lib/persona.js          # JARVIS's personality / system prompt
 ```

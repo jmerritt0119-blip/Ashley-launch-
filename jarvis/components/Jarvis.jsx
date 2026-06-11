@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Starfield from './Starfield';
-import ReactorCore from './ReactorCore';
+import Reactor from './Reactor';
 
 const STATUS_LABEL = {
   idle: 'ONLINE',
@@ -208,28 +208,54 @@ export default function Jarvis() {
     };
   }, [pickVoice]);
 
-  const speak = useCallback(
-    (text) => {
-      if (typeof window === 'undefined' || !window.speechSynthesis || !text) return;
-      window.speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text);
-      u.voice = voiceRef.current || pickVoice();
-      u.rate = 1.02;
-      u.pitch = 0.92;
-      u.volume = 1;
-      u.onstart = () => setStatus('speaking');
-      u.onend = () => {
-        setStatus((s) => (s === 'speaking' ? 'idle' : s));
-        // In ambient mode, resume listening with a follow-up window open.
-        if (ambientOnRef.current) openConversationWindow();
-      };
-      window.speechSynthesis.speak(u);
-    },
+  // A speech QUEUE so JARVIS can start talking sentence-by-sentence while the
+  // rest of the reply is still streaming in.
+  const speechQueueRef = useRef([]);
+  const speakingActiveRef = useRef(false);
+
+  const playNext = useCallback(() => {
+    if (typeof window === 'undefined' || !window.speechSynthesis) return;
+    const q = speechQueueRef.current;
+    if (!q.length) {
+      speakingActiveRef.current = false;
+      setStatus((s) => (s === 'speaking' ? 'idle' : s));
+      // In ambient mode, reopen the floor once he's finished talking.
+      if (ambientOnRef.current) openConversationWindow();
+      return;
+    }
+    const text = q.shift();
+    const u = new SpeechSynthesisUtterance(text);
+    u.voice = voiceRef.current || pickVoice();
+    u.rate = 1.02;
+    u.pitch = 0.92;
+    u.volume = 1;
+    u.onstart = () => setStatus('speaking');
+    u.onend = () => playNext();
+    u.onerror = () => playNext();
+    window.speechSynthesis.speak(u);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pickVoice]
+  }, [pickVoice]);
+
+  const enqueueSpeech = useCallback(
+    (text) => {
+      if (typeof window === 'undefined' || !window.speechSynthesis) return;
+      const clean = (text || '').trim();
+      if (!clean) return;
+      speechQueueRef.current.push(clean);
+      if (!speakingActiveRef.current) {
+        speakingActiveRef.current = true;
+        playNext();
+      }
+    },
+    [playNext]
   );
 
+  // speak() = say a whole block as one utterance (greeting, welcome-back, reset)
+  const speak = enqueueSpeech;
+
   const stopSpeaking = useCallback(() => {
+    speechQueueRef.current = [];
+    speakingActiveRef.current = false;
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       window.speechSynthesis.cancel();
     }
@@ -459,6 +485,9 @@ export default function Jarvis() {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let acc = '';
+        let spokenLen = 0; // how much of the reply we've already queued to speak
+        let enqueuedAny = false;
+
         // eslint-disable-next-line no-constant-condition
         while (true) {
           const { done, value } = await reader.read();
@@ -471,6 +500,23 @@ export default function Jarvis() {
             next[next.length - 1] = { role: 'assistant', content: visible };
             return next;
           });
+
+          // Speak each COMPLETE sentence the moment it's fully streamed.
+          if (voiceOutRef.current && visible.length > spokenLen) {
+            const re = /[.!?…](\s|$)/g;
+            re.lastIndex = spokenLen;
+            let m;
+            let lastEnd = spokenLen;
+            while ((m = re.exec(visible)) !== null) lastEnd = m.index + 1;
+            if (lastEnd > spokenLen) {
+              const chunk = visible.slice(spokenLen, lastEnd).trim();
+              if (chunk) {
+                enqueueSpeech(chunk);
+                enqueuedAny = true;
+              }
+              spokenLen = lastEnd;
+            }
+          }
         }
 
         // Split the spoken reply from any trailing source list.
@@ -495,9 +541,17 @@ export default function Jarvis() {
           return next;
         });
 
-        if (voiceOutRef.current && spokenText) {
-          speak(spokenText); // onend resumes ambient listening
-        } else {
+        // Speak whatever's left after the last sentence boundary.
+        if (voiceOutRef.current) {
+          const remainder = spokenText.slice(spokenLen).trim();
+          if (remainder) {
+            enqueueSpeech(remainder);
+            enqueuedAny = true;
+          }
+        }
+        // If nothing was queued to speak, settle now (the queue drain handles
+        // ambient resume when speech IS playing).
+        if (!(voiceOutRef.current && enqueuedAny)) {
           setStatus('idle');
           if (ambientOnRef.current) openConversationWindow();
         }
@@ -518,7 +572,7 @@ export default function Jarvis() {
         setBusy(false);
       }
     },
-    [messages, speak, stopSpeaking, stopAmbientRec, openConversationWindow]
+    [messages, enqueueSpeech, stopSpeaking, stopAmbientRec, openConversationWindow]
   );
 
   useEffect(() => {
@@ -582,7 +636,7 @@ export default function Jarvis() {
               J.A.R.V.I.S.
             </span>
             <span className="hidden text-xs uppercase tracking-widest text-cyan-200/50 sm:inline">
-              Mark IV
+              Mark V
             </span>
           </div>
           <div className="flex items-center gap-2 text-xs sm:gap-4">
@@ -625,7 +679,7 @@ export default function Jarvis() {
           {/* Reactor */}
           <section className="relative flex items-center justify-center sm:w-1/2">
             <div className="aspect-square w-[min(46vh,92vw)] max-w-[520px]">
-              <ReactorCore status={status} audioRef={audioRef} />
+              <Reactor status={status} audioRef={audioRef} />
             </div>
             <div className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 text-center">
               {ambient && heardHint ? (
