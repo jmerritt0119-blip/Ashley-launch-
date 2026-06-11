@@ -63,6 +63,26 @@ npm run dev
 
 Open <http://localhost:3000> and say hello.
 
+## Deploy to Netlify
+
+This folder is preconfigured for Netlify (see `netlify.toml`).
+
+1. Go to [app.netlify.com](https://app.netlify.com) → **Add new site** → **Import
+   an existing project** → connect GitHub → pick this repository.
+2. On the configuration screen, set **Base directory** to `jarvis`.
+   (Build command `npm run build` and the Next.js runtime are detected
+   automatically from `netlify.toml`.)
+3. Open **Environment variables** and add **`ANTHROPIC_API_KEY`** with your key
+   from [console.anthropic.com](https://console.anthropic.com/). Optionally add
+   `JARVIS_ADDRESS`, `JARVIS_MODEL`, or `JARVIS_WEB_SEARCH`.
+4. Click **Deploy**. You'll get a public URL like `your-jarvis.netlify.app` you
+   can open on any device — tap **AMBIENT**, allow the mic, and talk to him.
+
+> **Note:** JARVIS replies stream from a serverless function. On Netlify's free
+> tier, functions cap around 10 seconds — long answers (especially with web
+> search) can be cut short. If you hit that, set `JARVIS_WEB_SEARCH=0` for
+> snappier replies, or upgrade the function timeout.
+
 ## Configuration
 
 All optional, set in `.env.local`:

@@ -1,0 +1,19 @@
+# Netlify configuration for the JARVIS app.
+#
+# This file lives in the jarvis/ folder. When you create the Netlify site,
+# set the site's "Base directory" to `jarvis` so Netlify builds from here.
+# Netlify auto-detects Next.js and applies its Next runtime (App Router,
+# the streaming /api/chat route runs as a serverless function).
+#
+# Required: add ANTHROPIC_API_KEY in Netlify → Site settings →
+# Environment variables (Site configuration → Environment variables).
+
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
