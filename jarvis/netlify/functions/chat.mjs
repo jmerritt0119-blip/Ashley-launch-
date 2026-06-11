@@ -1,8 +1,10 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { getStore } from '@netlify/blobs';
 import { buildSystemPrompt } from '../../lib/persona.js';
 
 // Standalone Netlify Function (v2) that powers JARVIS. Mapped to /api/chat so
-// the front-end calls it exactly as before. Streams Claude's reply.
+// the front-end calls it exactly as before. Streams Claude's reply, can search
+// the web, and — when paired — dispatch actions to the user's Mac.
 export const config = { path: '/api/chat' };
 
 const MODEL = process.env.JARVIS_MODEL || 'claude-opus-4-8';
@@ -12,6 +14,29 @@ const WEB_SEARCH = process.env.JARVIS_WEB_SEARCH !== '0';
 // Marker separating the spoken reply from a trailing JSON array of sources.
 // Kept identical in components/Jarvis.jsx.
 const SOURCE_SENTINEL = '\n␞__SRC__␞';
+
+const CONTROL_TOOL = {
+  name: 'control_computer',
+  description:
+    "Perform an action on the user's Mac (a local agent is running). Use ONLY when the " +
+    'user asks you to do something on their computer: open an app, open a website, speak ' +
+    'aloud on the Mac, show a notification, report system info, or run a command. After ' +
+    'calling it, confirm briefly in your spoken reply.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      action: {
+        type: 'string',
+        enum: ['open_app', 'open_url', 'say', 'notify', 'system_info', 'applescript', 'shell'],
+        description: 'What to do on the Mac.',
+      },
+      target: { type: 'string', description: 'App name (open_app) or URL (open_url).' },
+      text: { type: 'string', description: 'Text to speak (say) or show (notify).' },
+      command: { type: 'string', description: 'AppleScript or shell command, if applicable.' },
+    },
+    required: ['action'],
+  },
+};
 
 function extractSources(message) {
   const out = [];
@@ -31,10 +56,16 @@ function extractSources(message) {
   return out;
 }
 
+async function dispatchToMac(code, input) {
+  const store = getStore('jarvis-relay');
+  const key = `queue_${code}`;
+  const cur = (await store.get(key, { type: 'json' })) || [];
+  cur.push({ id: crypto.randomUUID(), at: Date.now(), ...input });
+  await store.setJSON(key, cur.slice(-25));
+}
+
 export default async (req) => {
-  if (req.method !== 'POST') {
-    return new Response('Method not allowed', { status: 405 });
-  }
+  if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
   if (!process.env.ANTHROPIC_API_KEY) {
     return new Response(
       'My apologies — no API key is configured. Add ANTHROPIC_API_KEY in the site environment variables.',
@@ -51,6 +82,7 @@ export default async (req) => {
 
   const incoming = Array.isArray(body?.messages) ? body.messages : [];
   const ctx = body?.context && typeof body.context === 'object' ? body.context : {};
+  const pairCode = typeof body?.pairCode === 'string' ? body.pairCode.trim().slice(0, 64) : '';
 
   const messages = incoming
     .filter((m) => m && (m.role === 'user' || m.role === 'assistant'))
@@ -67,25 +99,26 @@ export default async (req) => {
     time: typeof ctx.time === 'string' ? ctx.time.slice(0, 120) : undefined,
     tz: typeof ctx.tz === 'string' ? ctx.tz.slice(0, 60) : undefined,
     webSearch: WEB_SEARCH,
+    computer: !!pairCode,
   });
 
   const stream = new ReadableStream({
     async start(controller) {
       let emitted = false;
 
-      const attempt = (useTools, useThinking) =>
+      const tools = [];
+      if (WEB_SEARCH) tools.push({ type: 'web_search_20260209', name: 'web_search', max_uses: 4 });
+      if (pairCode) tools.push(CONTROL_TOOL);
+
+      const runOnce = (convo, useTools, useThinking) =>
         new Promise((resolve, reject) => {
           const run = client.messages.stream({
             model: MODEL,
-            max_tokens: useTools ? 4096 : 3072,
+            max_tokens: 4096,
             system,
-            // Adaptive thinking: Claude reasons more on hard questions, stays
-            // fast on simple ones. Big intelligence boost for free.
             ...(useThinking ? { thinking: { type: 'adaptive' } } : {}),
-            messages,
-            ...(useTools
-              ? { tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 4 }] }
-              : {}),
+            messages: convo,
+            ...(useTools && tools.length ? { tools } : {}),
           });
           run.on('text', (text) => {
             emitted = true;
@@ -95,18 +128,41 @@ export default async (req) => {
         });
 
       try {
+        const convo = messages.slice();
         let finalMsg;
         try {
-          finalMsg = await attempt(WEB_SEARCH, true);
+          // Agentic loop: stream, and if Claude calls control_computer, dispatch
+          // it to the Mac and continue until he produces a final spoken reply.
+          for (let i = 0; i < 5; i++) {
+            finalMsg = await runOnce(convo, true, true);
+            if (finalMsg.stop_reason !== 'tool_use') break;
+            const calls = (finalMsg.content || []).filter(
+              (b) => b.type === 'tool_use' && b.name === 'control_computer'
+            );
+            if (!calls.length) break;
+            const results = [];
+            for (const call of calls) {
+              let note = 'Dispatched to your Mac.';
+              try {
+                if (pairCode) await dispatchToMac(pairCode, call.input || {});
+                else note = 'No Mac is paired right now.';
+              } catch {
+                note = 'I could not reach the relay just now.';
+              }
+              results.push({ type: 'tool_result', tool_use_id: call.id, content: note });
+            }
+            convo.push({ role: 'assistant', content: finalMsg.content });
+            convo.push({ role: 'user', content: results });
+          }
         } catch (err) {
-          // If anything failed before output (tools or thinking unavailable),
-          // fall back to a plain, guaranteed-compatible completion.
+          // Anything failed before output → plain, guaranteed-compatible reply.
           if (!emitted) {
-            finalMsg = await attempt(false, false);
+            finalMsg = await runOnce(messages.slice(), false, false);
           } else {
             throw err;
           }
         }
+
         const sources = extractSources(finalMsg);
         if (sources.length) {
           controller.enqueue(encoder.encode(SOURCE_SENTINEL + JSON.stringify(sources)));

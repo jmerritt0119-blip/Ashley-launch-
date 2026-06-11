@@ -1,0 +1,11 @@
+{
+  "name": "jarvis-mac-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "bin": { "jarvis-agent": "agent.mjs" },
+  "scripts": {
+    "start": "node agent.mjs"
+  },
+  "engines": { "node": ">=18" }
+}
