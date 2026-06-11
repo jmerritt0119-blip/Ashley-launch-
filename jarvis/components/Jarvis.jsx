@@ -111,6 +111,7 @@ export default function Jarvis() {
   const [listening, setListening] = useState(false);
   const [ambient, setAmbient] = useState(false);
   const [heardHint, setHeardHint] = useState('');
+  const [needsTap, setNeedsTap] = useState(true);
   const [error, setError] = useState('');
 
   // refs that the various async callbacks read (avoids stale closures)
@@ -145,33 +146,57 @@ export default function Jarvis() {
   // ---- Boot sequence ------------------------------------------------------
   const restoredRef = useRef(false);
   const greetedRef = useRef(false);
+  const firstSpeechRef = useRef(''); // what JARVIS says on the first wake
   useEffect(() => {
     const saved = loadHistory();
     if (saved && saved.length) {
       restoredRef.current = true;
-      greetedRef.current = true; // don't re-speak restored history
-      setMessages([
-        ...saved,
-        { role: 'assistant', content: 'Welcome back, sir. Picking up where we left off.' },
-      ]);
+      const wb = 'Welcome back, sir. Picking up where we left off.';
+      setMessages([...saved, { role: 'assistant', content: wb }]);
+      firstSpeechRef.current = wb;
     } else {
-      setMessages([{ role: 'assistant', content: greetingFor() }]);
+      const g = greetingFor();
+      setMessages([{ role: 'assistant', content: g }]);
+      firstSpeechRef.current = g;
     }
     const t = setTimeout(() => setBooted(true), 2600);
     return () => clearTimeout(t);
   }, []);
 
+  // Browsers block speech synthesis until the user interacts with the page
+  // (especially on mobile). On the first tap/keypress we "wake" JARVIS: unlock
+  // the audio engine and speak his greeting.
   useEffect(() => {
-    if (booted && voiceOut && !greetedRef.current && messages[0]) {
-      greetedRef.current = true;
-      speak(messages[0].content);
-    } else if (booted && voiceOut && restoredRef.current && messages.length) {
-      // Speak the short "welcome back" line once after a restore.
-      restoredRef.current = false;
-      speak(messages[messages.length - 1].content);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [booted]);
+    const unlock = () => {
+      try {
+        const ss = window.speechSynthesis;
+        if (ss) {
+          ss.resume();
+          const primer = new SpeechSynthesisUtterance(' ');
+          primer.volume = 0;
+          ss.speak(primer);
+        }
+      } catch {}
+      setNeedsTap(false);
+      if (!greetedRef.current) {
+        greetedRef.current = true;
+        if (voiceOutRef.current && firstSpeechRef.current) {
+          speak(firstSpeechRef.current);
+        }
+      }
+      window.removeEventListener('pointerdown', unlock, true);
+      window.removeEventListener('keydown', unlock, true);
+      window.removeEventListener('touchend', unlock, true);
+    };
+    window.addEventListener('pointerdown', unlock, true);
+    window.addEventListener('keydown', unlock, true);
+    window.addEventListener('touchend', unlock, true);
+    return () => {
+      window.removeEventListener('pointerdown', unlock, true);
+      window.removeEventListener('keydown', unlock, true);
+      window.removeEventListener('touchend', unlock, true);
+    };
+  }, [speak]);
 
   // Persist conversation whenever it settles (not mid-stream).
   useEffect(() => {
@@ -751,7 +776,11 @@ export default function Jarvis() {
               <Reactor status={status} audioRef={audioRef} />
             </div>
             <div className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 text-center">
-              {ambient && heardHint ? (
+              {needsTap ? (
+                <p className="hud-mono blink text-[11px] tracking-[0.3em] text-cyan-200/90 text-glow">
+                  ▸ TAP TO WAKE JARVIS
+                </p>
+              ) : ambient && heardHint ? (
                 <p className="hud-mono text-[11px] tracking-[0.3em] text-green-300/80 text-glow">
                   {heardHint}
                 </p>
