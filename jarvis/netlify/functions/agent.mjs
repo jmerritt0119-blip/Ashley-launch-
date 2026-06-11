@@ -7,6 +7,7 @@ export const config = { path: '/api/agent' };
 
 const queueKey = (code) => `queue_${code}`;
 const resultKey = (code) => `result_${code}`;
+const seenKey = (code) => `seen_${code}`;
 
 export default async (req) => {
   const url = new URL(req.url);
@@ -23,11 +24,17 @@ export default async (req) => {
   try {
     store = getStore('jarvis-relay');
   } catch {
-    return json({ commands: [] });
+    return json({ commands: [], online: false });
   }
 
   if (req.method === 'GET') {
-    // Agent polls for pending commands; hand them over and clear the queue.
+    // Phone asks whether the Mac agent is alive (doesn't touch the queue).
+    if (url.searchParams.get('status')) {
+      const seen = (await store.get(seenKey(code), { type: 'json' })) || 0;
+      return json({ online: Date.now() - Number(seen) < 8000 });
+    }
+    // Agent poll: record a heartbeat, then hand over + clear pending commands.
+    await store.setJSON(seenKey(code), Date.now());
     const pending = (await store.get(queueKey(code), { type: 'json' })) || [];
     if (pending.length) await store.setJSON(queueKey(code), []);
     return json({ commands: pending });

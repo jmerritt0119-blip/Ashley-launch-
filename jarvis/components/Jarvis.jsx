@@ -117,6 +117,8 @@ export default function Jarvis() {
   const [ambient, setAmbient] = useState(false);
   const [heardHint, setHeardHint] = useState('');
   const [needsTap, setNeedsTap] = useState(true);
+  const [paired, setPaired] = useState(false);
+  const [macOnline, setMacOnline] = useState(null);
   const [error, setError] = useState('');
 
   // refs that the various async callbacks read (avoids stale closures)
@@ -248,8 +250,31 @@ export default function Jarvis() {
         window.history.replaceState({}, '', url.toString());
       }
       pairRef.current = window.localStorage.getItem('jarvis:pair') || '';
+      setPaired(!!pairRef.current);
     } catch {}
   }, []);
+
+  // When paired, poll the relay to show whether the Mac agent is connected.
+  useEffect(() => {
+    if (!paired) return;
+    let stop = false;
+    const code = pairRef.current;
+    const ping = async () => {
+      try {
+        const r = await fetch(`/api/agent?code=${encodeURIComponent(code)}&status=1`);
+        const d = await r.json();
+        if (!stop) setMacOnline(!!d.online);
+      } catch {
+        if (!stop) setMacOnline(false);
+      }
+    };
+    ping();
+    const id = setInterval(ping, 4000);
+    return () => {
+      stop = true;
+      clearInterval(id);
+    };
+  }, [paired]);
 
   // ---- Live audio analyser ------------------------------------------------
   const startAnalyser = useCallback(async () => {
@@ -838,6 +863,15 @@ export default function Jarvis() {
               </span>
             )}
           </div>
+          {VOICE_ONLY && paired && (
+            <span
+              className={`hud-mono text-[9px] tracking-[0.2em] ${
+                macOnline ? 'text-green-300/90 text-glow' : 'text-cyan-200/40'
+              }`}
+            >
+              {macOnline ? '● MAC LINKED' : '○ MAC OFFLINE'}
+            </span>
+          )}
           {!VOICE_ONLY && (
           <div className="flex items-center gap-2 text-xs sm:gap-4">
             <StatusPill status={status} />
