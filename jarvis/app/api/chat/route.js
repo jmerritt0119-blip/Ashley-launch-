@@ -7,6 +7,8 @@ export const dynamic = 'force-dynamic';
 
 const MODEL = process.env.JARVIS_MODEL || 'claude-opus-4-8';
 const ADDRESS = process.env.JARVIS_ADDRESS || 'sir';
+// Live web search is on by default; set JARVIS_WEB_SEARCH=0 to disable.
+const WEB_SEARCH = process.env.JARVIS_WEB_SEARCH !== '0';
 
 export async function POST(req) {
   if (!process.env.ANTHROPIC_API_KEY) {
@@ -24,6 +26,7 @@ export async function POST(req) {
   }
 
   const incoming = Array.isArray(body?.messages) ? body.messages : [];
+  const ctx = body?.context && typeof body.context === 'object' ? body.context : {};
 
   // Normalise to the Messages API shape and drop anything empty.
   const messages = incoming
@@ -38,21 +41,51 @@ export async function POST(req) {
   const client = new Anthropic();
   const encoder = new TextEncoder();
 
+  const system = buildSystemPrompt(ADDRESS, {
+    time: typeof ctx.time === 'string' ? ctx.time.slice(0, 120) : undefined,
+    tz: typeof ctx.tz === 'string' ? ctx.tz.slice(0, 60) : undefined,
+    webSearch: WEB_SEARCH,
+  });
+
   const stream = new ReadableStream({
     async start(controller) {
+      let emitted = false;
+
+      // Run one streaming attempt. `useTools` toggles the server-side web search tool.
+      const attempt = (useTools) =>
+        new Promise((resolve, reject) => {
+          const run = client.messages.stream({
+            model: MODEL,
+            max_tokens: useTools ? 2048 : 1500,
+            system,
+            messages,
+            ...(useTools
+              ? {
+                  tools: [
+                    { type: 'web_search_20260209', name: 'web_search', max_uses: 4 },
+                  ],
+                }
+              : {}),
+          });
+          run.on('text', (text) => {
+            emitted = true;
+            controller.enqueue(encoder.encode(text));
+          });
+          run.finalMessage().then(resolve, reject);
+        });
+
       try {
-        const run = client.messages.stream({
-          model: MODEL,
-          max_tokens: 1500,
-          system: buildSystemPrompt(ADDRESS),
-          messages,
-        });
-
-        run.on('text', (text) => {
-          controller.enqueue(encoder.encode(text));
-        });
-
-        await run.finalMessage();
+        try {
+          await attempt(WEB_SEARCH);
+        } catch (err) {
+          // If web search isn't available to this account, the request may 400
+          // before any text streams. Fall back to a plain (no-tool) completion.
+          if (WEB_SEARCH && !emitted) {
+            await attempt(false);
+          } else {
+            throw err;
+          }
+        }
         controller.close();
       } catch (err) {
         const status = err?.status;
@@ -67,7 +100,7 @@ export async function POST(req) {
           message = 'I encountered an unexpected fault while thinking that through.';
         }
         try {
-          controller.enqueue(encoder.encode(message));
+          if (!emitted) controller.enqueue(encoder.encode(message));
         } catch {}
         controller.close();
       }

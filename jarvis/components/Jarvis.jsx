@@ -11,55 +11,129 @@ const STATUS_LABEL = {
   speaking: 'SPEAKING',
 };
 
-const GREETING =
-  'Systems online. All faculties nominal. How may I help you today, sir?';
+const WAKE_WORDS = ['jarvis', 'hey jarvis', 'okay jarvis', 'hey jervis', 'jervis'];
+// After a reply, stay open for a follow-up without the wake word for this long.
+const CONVERSATION_WINDOW_MS = 9000;
+
+function greetingFor(date = new Date()) {
+  const h = date.getHours();
+  const part = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+  return `${part}. Systems online, all faculties nominal. How may I help you, sir?`;
+}
 
 export default function Jarvis() {
   const [booted, setBooted] = useState(false);
-  const [messages, setMessages] = useState([
-    { role: 'assistant', content: GREETING },
-  ]);
+  const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [status, setStatus] = useState('idle');
   const [busy, setBusy] = useState(false);
   const [voiceOut, setVoiceOut] = useState(true);
   const [micSupported, setMicSupported] = useState(false);
   const [listening, setListening] = useState(false);
+  const [ambient, setAmbient] = useState(false);
+  const [heardHint, setHeardHint] = useState('');
   const [error, setError] = useState('');
 
-  const recognitionRef = useRef(null);
+  // refs that the various async callbacks read (avoids stale closures)
+  const recognitionRef = useRef(null); // push-to-talk instance
+  const ambientRecRef = useRef(null); // continuous wake-word instance
+  const ambientActiveRef = useRef(false); // is the ambient recognizer running
+  const ambientOnRef = useRef(false); // is ambient MODE enabled
+  const convoOpenRef = useRef(false); // follow-up window open (no wake word needed)
+  const convoTimerRef = useRef(null);
   const voiceRef = useRef(null);
+  const voiceOutRef = useRef(voiceOut);
+  const busyRef = useRef(false);
+  const sendRef = useRef(null); // always points at the latest send()
   const transcriptRef = useRef(null);
   const inputRef = useRef(null);
 
+  // live audio analyser shared with the reactor (no re-renders)
+  const audioRef = useRef({ level: 0, freq: null });
+  const audioCtxRef = useRef(null);
+  const audioStreamRef = useRef(null);
+  const audioRafRef = useRef(null);
+
+  useEffect(() => {
+    voiceOutRef.current = voiceOut;
+  }, [voiceOut]);
+  useEffect(() => {
+    busyRef.current = busy;
+  }, [busy]);
+
   // ---- Boot sequence ------------------------------------------------------
   useEffect(() => {
+    const greeting = greetingFor();
+    setMessages([{ role: 'assistant', content: greeting }]);
     const t = setTimeout(() => setBooted(true), 2600);
     return () => clearTimeout(t);
   }, []);
 
-  // Speak the greeting once, after boot, if voice is on.
   const greetedRef = useRef(false);
   useEffect(() => {
-    if (booted && voiceOut && !greetedRef.current) {
+    if (booted && voiceOut && !greetedRef.current && messages[0]) {
       greetedRef.current = true;
-      speak(GREETING);
+      speak(messages[0].content);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [booted]);
+
+  // ---- Live audio analyser ------------------------------------------------
+  const startAnalyser = useCallback(async () => {
+    if (audioCtxRef.current) return;
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioStreamRef.current = stream;
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      const ac = new Ctx();
+      audioCtxRef.current = ac;
+      const src = ac.createMediaStreamSource(stream);
+      const analyser = ac.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.75;
+      src.connect(analyser);
+      const freq = new Uint8Array(analyser.frequencyBinCount);
+      const tdata = new Uint8Array(analyser.fftSize);
+      const loop = () => {
+        analyser.getByteFrequencyData(freq);
+        analyser.getByteTimeDomainData(tdata);
+        let sum = 0;
+        for (let i = 0; i < tdata.length; i++) {
+          const v = (tdata[i] - 128) / 128;
+          sum += v * v;
+        }
+        audioRef.current.level = Math.sqrt(sum / tdata.length);
+        audioRef.current.freq = freq;
+        audioRafRef.current = requestAnimationFrame(loop);
+      };
+      loop();
+    } catch {
+      // mic analysis is a bonus — degrade silently to the time-based animation
+    }
+  }, []);
+
+  const stopAnalyser = useCallback(() => {
+    if (audioRafRef.current) cancelAnimationFrame(audioRafRef.current);
+    if (audioStreamRef.current) {
+      audioStreamRef.current.getTracks().forEach((t) => t.stop());
+    }
+    if (audioCtxRef.current) {
+      try {
+        audioCtxRef.current.close();
+      } catch {}
+    }
+    audioCtxRef.current = null;
+    audioStreamRef.current = null;
+    audioRef.current = { level: 0, freq: null };
+  }, []);
 
   // ---- Speech synthesis ---------------------------------------------------
   const pickVoice = useCallback(() => {
     if (typeof window === 'undefined' || !window.speechSynthesis) return null;
     const voices = window.speechSynthesis.getVoices();
     if (!voices.length) return null;
-    const prefer = [
-      'Daniel',
-      'Google UK English Male',
-      'Microsoft Ryan',
-      'Arthur',
-      'Oliver',
-    ];
+    const prefer = ['Daniel', 'Google UK English Male', 'Microsoft Ryan', 'Arthur', 'Oliver'];
     for (const name of prefer) {
       const v = voices.find((vo) => vo.name.includes(name));
       if (v) return v;
@@ -82,8 +156,7 @@ export default function Jarvis() {
 
   const speak = useCallback(
     (text) => {
-      if (typeof window === 'undefined' || !window.speechSynthesis) return;
-      if (!text) return;
+      if (typeof window === 'undefined' || !window.speechSynthesis || !text) return;
       window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
       u.voice = voiceRef.current || pickVoice();
@@ -91,9 +164,14 @@ export default function Jarvis() {
       u.pitch = 0.92;
       u.volume = 1;
       u.onstart = () => setStatus('speaking');
-      u.onend = () => setStatus((s) => (s === 'speaking' ? 'idle' : s));
+      u.onend = () => {
+        setStatus((s) => (s === 'speaking' ? 'idle' : s));
+        // In ambient mode, resume listening with a follow-up window open.
+        if (ambientOnRef.current) openConversationWindow();
+      };
       window.speechSynthesis.speak(u);
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [pickVoice]
   );
 
@@ -104,7 +182,19 @@ export default function Jarvis() {
     setStatus((s) => (s === 'speaking' ? 'idle' : s));
   }, []);
 
-  // ---- Speech recognition -------------------------------------------------
+  // ---- Conversation window (ambient follow-up) ----------------------------
+  const openConversationWindow = useCallback(() => {
+    convoOpenRef.current = true;
+    if (convoTimerRef.current) clearTimeout(convoTimerRef.current);
+    convoTimerRef.current = setTimeout(() => {
+      convoOpenRef.current = false;
+      setHeardHint('');
+    }, CONVERSATION_WINDOW_MS);
+    setHeardHint('Listening…');
+    startAmbientRec();
+  }, []);
+
+  // ---- Push-to-talk recognition ------------------------------------------
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -119,7 +209,7 @@ export default function Jarvis() {
       const text = e.results[0][0].transcript;
       setListening(false);
       setStatus('idle');
-      send(text);
+      if (sendRef.current) sendRef.current(text);
     };
     rec.onerror = () => {
       setListening(false);
@@ -150,12 +240,130 @@ export default function Jarvis() {
       return;
     }
     stopSpeaking();
+    startAnalyser();
     try {
       rec.start();
       setListening(true);
       setStatus('listening');
     } catch {}
-  }, [listening, stopSpeaking]);
+  }, [listening, stopSpeaking, startAnalyser]);
+
+  // ---- Ambient wake-word recognition --------------------------------------
+  const startAmbientRec = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return;
+    if (ambientActiveRef.current) return; // already running
+    // Don't listen while JARVIS is speaking (avoid hearing himself).
+    if (typeof window !== 'undefined' && window.speechSynthesis?.speaking) return;
+
+    const rec = new SR();
+    rec.lang = 'en-US';
+    rec.interimResults = true;
+    rec.continuous = true;
+    rec.maxAlternatives = 1;
+
+    rec.onresult = (e) => {
+      let finalText = '';
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const r = e.results[i];
+        if (r.isFinal) finalText += r[0].transcript;
+        else interim += r[0].transcript;
+      }
+      if (interim) setHeardHint(interim.trim().slice(0, 60));
+      if (!finalText) return;
+
+      const lower = finalText.toLowerCase().trim();
+      let command = null;
+
+      // Find the latest wake word and take everything after it.
+      let cut = -1;
+      let cutWord = '';
+      for (const w of WAKE_WORDS) {
+        const idx = lower.lastIndexOf(w);
+        if (idx > cut) {
+          cut = idx;
+          cutWord = w;
+        }
+      }
+      if (cut >= 0) {
+        command = finalText.slice(cut + cutWord.length).replace(/^[\s,.:!?-]+/, '').trim();
+      } else if (convoOpenRef.current) {
+        // Inside a follow-up window — no wake word required.
+        command = finalText.trim();
+      }
+
+      if (command == null) return; // no wake word, no open window → ignore ambient chatter
+
+      if (command.length < 2) {
+        // Just the wake word — acknowledge and open the floor.
+        openConversationWindow();
+        setHeardHint('Yes, sir?');
+        return;
+      }
+
+      // We have a command. Stop the recognizer and act on it.
+      stopAmbientRec();
+      setHeardHint('');
+      if (sendRef.current) sendRef.current(command);
+    };
+
+    rec.onerror = () => {
+      ambientActiveRef.current = false;
+    };
+    rec.onend = () => {
+      ambientActiveRef.current = false;
+      // Auto-restart if ambient mode is still on and we're not busy/speaking.
+      if (
+        ambientOnRef.current &&
+        !busyRef.current &&
+        !(typeof window !== 'undefined' && window.speechSynthesis?.speaking)
+      ) {
+        setTimeout(() => startAmbientRec(), 300);
+      }
+    };
+
+    try {
+      rec.start();
+      ambientRecRef.current = rec;
+      ambientActiveRef.current = true;
+      if (!convoOpenRef.current) setHeardHint('Say “Hey JARVIS”…');
+    } catch {
+      ambientActiveRef.current = false;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const stopAmbientRec = useCallback(() => {
+    const rec = ambientRecRef.current;
+    ambientActiveRef.current = false;
+    if (rec) {
+      try {
+        rec.stop();
+      } catch {}
+    }
+  }, []);
+
+  const toggleAmbient = useCallback(() => {
+    if (ambient) {
+      ambientOnRef.current = false;
+      convoOpenRef.current = false;
+      if (convoTimerRef.current) clearTimeout(convoTimerRef.current);
+      stopAmbientRec();
+      stopAnalyser();
+      setAmbient(false);
+      setHeardHint('');
+      setStatus('idle');
+    } else {
+      ambientOnRef.current = true;
+      setAmbient(true);
+      setVoiceOut(true); // ambient mode wants spoken replies
+      stopSpeaking();
+      startAnalyser();
+      startAmbientRec();
+    }
+  }, [ambient, stopAmbientRec, stopAnalyser, startAnalyser, startAmbientRec, stopSpeaking]);
 
   // ---- Auto-scroll transcript --------------------------------------------
   useEffect(() => {
@@ -167,32 +375,36 @@ export default function Jarvis() {
   const send = useCallback(
     async (raw) => {
       const text = (raw ?? '').trim();
-      if (!text || busy) return;
+      if (!text || busyRef.current) return;
       setError('');
       setInput('');
       stopSpeaking();
+      stopAmbientRec(); // don't transcribe ourselves mid-turn
 
       const history = [...messages, { role: 'user', content: text }];
       setMessages([...history, { role: 'assistant', content: '' }]);
       setBusy(true);
       setStatus('thinking');
 
+      const context = {
+        time: new Date().toString(),
+        tz:
+          typeof Intl !== 'undefined'
+            ? Intl.DateTimeFormat().resolvedOptions().timeZone
+            : undefined,
+      };
+
       try {
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: history }),
+          body: JSON.stringify({ messages: history, context }),
         });
-
-        if (!res.ok || !res.body) {
-          throw new Error('Request failed');
-        }
+        if (!res.ok || !res.body) throw new Error('Request failed');
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let acc = '';
-
-        // read the stream, updating the last (assistant) message live
         // eslint-disable-next-line no-constant-condition
         while (true) {
           const { done, value } = await reader.read();
@@ -205,9 +417,13 @@ export default function Jarvis() {
           });
         }
 
-        if (voiceOut && acc) speak(acc);
-        else setStatus('idle');
-      } catch (err) {
+        if (voiceOutRef.current && acc) {
+          speak(acc); // onend resumes ambient listening
+        } else {
+          setStatus('idle');
+          if (ambientOnRef.current) openConversationWindow();
+        }
+      } catch {
         setError('Connection to core severed. Please try again.');
         setMessages((prev) => {
           const next = prev.slice();
@@ -219,12 +435,30 @@ export default function Jarvis() {
           return next;
         });
         setStatus('idle');
+        if (ambientOnRef.current) openConversationWindow();
       } finally {
         setBusy(false);
       }
     },
-    [busy, messages, voiceOut, speak, stopSpeaking]
+    [messages, speak, stopSpeaking, stopAmbientRec, openConversationWindow]
   );
+
+  useEffect(() => {
+    sendRef.current = send;
+  }, [send]);
+
+  // cleanup on unmount
+  useEffect(() => {
+    return () => {
+      ambientOnRef.current = false;
+      stopAmbientRec();
+      stopAnalyser();
+      if (convoTimerRef.current) clearTimeout(convoTimerRef.current);
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, [stopAmbientRec, stopAnalyser]);
 
   const onSubmit = (e) => {
     e.preventDefault();
@@ -237,7 +471,6 @@ export default function Jarvis() {
       <Starfield />
       <div className="scanline" />
 
-      {/* radial vignette */}
       <div
         className="pointer-events-none absolute inset-0"
         style={{
@@ -246,14 +479,9 @@ export default function Jarvis() {
         }}
       />
 
-      {/* Boot overlay */}
       {!booted && <BootSequence />}
 
-      <div
-        className={`relative z-10 flex h-full flex-col ${
-          booted ? 'flicker-in' : 'opacity-0'
-        }`}
-      >
+      <div className={`relative z-10 flex h-full flex-col ${booted ? 'flicker-in' : 'opacity-0'}`}>
         {/* Top status bar */}
         <header className="flex items-center justify-between px-5 py-4 sm:px-8">
           <div className="flex items-center gap-3">
@@ -264,8 +492,21 @@ export default function Jarvis() {
               Mark III
             </span>
           </div>
-          <div className="flex items-center gap-4 text-xs">
+          <div className="flex items-center gap-2 text-xs sm:gap-4">
             <StatusPill status={status} />
+            {micSupported && (
+              <button
+                onClick={toggleAmbient}
+                className={`hud-mono rounded border px-2 py-1 tracking-widest transition ${
+                  ambient
+                    ? 'border-green-300/70 bg-green-400/10 text-green-200'
+                    : 'border-cyan-300/30 text-cyan-200/80 hover:border-cyan-300/70 hover:text-cyan-100'
+                }`}
+                title='Hands-free "Hey JARVIS" mode'
+              >
+                {ambient ? 'AMBIENT ●' : 'AMBIENT'}
+              </button>
+            )}
             <button
               onClick={() => {
                 if (voiceOut) stopSpeaking();
@@ -284,12 +525,18 @@ export default function Jarvis() {
           {/* Reactor */}
           <section className="relative flex items-center justify-center sm:w-1/2">
             <div className="aspect-square w-[min(46vh,92vw)] max-w-[520px]">
-              <ReactorCore status={status} />
+              <ReactorCore status={status} audioRef={audioRef} />
             </div>
             <div className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 text-center">
-              <p className="hud-mono text-[10px] tracking-[0.4em] text-cyan-200/40">
-                ARC REACTOR · STABLE
-              </p>
+              {ambient && heardHint ? (
+                <p className="hud-mono text-[11px] tracking-[0.3em] text-green-300/80 text-glow">
+                  {heardHint}
+                </p>
+              ) : (
+                <p className="hud-mono text-[10px] tracking-[0.4em] text-cyan-200/40">
+                  ARC REACTOR · STABLE
+                </p>
+              )}
             </div>
           </section>
 
@@ -308,30 +555,24 @@ export default function Jarvis() {
                 {messages.map((m, i) => (
                   <Bubble key={i} role={m.role} content={m.content} />
                 ))}
-                {busy &&
-                  messages[messages.length - 1]?.content === '' && <Thinking />}
+                {busy && messages[messages.length - 1]?.content === '' && <Thinking />}
               </div>
 
-              {error && (
-                <p className="mt-2 text-xs text-amber-300/80">{error}</p>
-              )}
+              {error && <p className="mt-2 text-xs text-amber-300/80">{error}</p>}
 
-              {/* Input */}
-              <form
-                onSubmit={onSubmit}
-                className="mt-3 flex items-center gap-2"
-              >
+              <form onSubmit={onSubmit} className="mt-3 flex items-center gap-2">
                 {micSupported && (
                   <button
                     type="button"
                     onClick={toggleMic}
-                    className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full border transition ${
+                    disabled={ambient}
+                    className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full border transition disabled:opacity-30 ${
                       listening
                         ? 'border-green-300 bg-green-400/20 text-green-200'
                         : 'border-cyan-300/40 text-cyan-200/80 hover:border-cyan-300/80 hover:text-cyan-100'
                     }`}
-                    title={listening ? 'Stop listening' : 'Speak to JARVIS'}
-                    aria-label="Toggle microphone"
+                    title={ambient ? 'Disabled in ambient mode' : 'Push to talk'}
+                    aria-label="Push to talk"
                   >
                     <MicIcon active={listening} />
                   </button>
@@ -340,7 +581,7 @@ export default function Jarvis() {
                   ref={inputRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  placeholder="Speak or type your request…"
+                  placeholder={ambient ? 'Ambient mode — just speak…' : 'Speak or type your request…'}
                   className="h-11 min-w-0 flex-1 rounded-md border border-cyan-300/25 bg-black/30 px-4 text-cyan-50 placeholder:text-cyan-200/30 outline-none transition focus:border-cyan-300/70"
                   autoComplete="off"
                   spellCheck="false"
@@ -356,7 +597,12 @@ export default function Jarvis() {
             </div>
 
             <p className="mt-2 text-center text-[10px] tracking-widest text-cyan-200/30 sm:text-left">
-              POWERED BY CLAUDE · {micSupported ? 'VOICE INTERFACE ACTIVE' : 'TEXT INTERFACE'}
+              POWERED BY CLAUDE ·{' '}
+              {ambient
+                ? 'HANDS-FREE — SAY “HEY JARVIS”'
+                : micSupported
+                ? 'VOICE INTERFACE ACTIVE'
+                : 'TEXT INTERFACE'}
             </p>
           </section>
         </div>
@@ -377,14 +623,8 @@ function StatusPill({ status }) {
       ? 'text-cyan-200 border-cyan-300/60'
       : 'text-cyan-300/80 border-cyan-300/40';
   return (
-    <span
-      className={`hud-mono flex items-center gap-2 rounded-full border px-3 py-1 tracking-[0.25em] ${color}`}
-    >
-      <span
-        className={`inline-block h-1.5 w-1.5 rounded-full bg-current ${
-          status !== 'idle' ? 'blink' : ''
-        }`}
-      />
+    <span className={`hud-mono flex items-center gap-2 rounded-full border px-3 py-1 tracking-[0.25em] ${color}`}>
+      <span className={`inline-block h-1.5 w-1.5 rounded-full bg-current ${status !== 'idle' ? 'blink' : ''}`} />
       {STATUS_LABEL[status]}
     </span>
   );
@@ -402,9 +642,7 @@ function Bubble({ role, content }) {
         }`}
       >
         {!isUser && (
-          <span className="hud-mono mb-1 block text-[9px] tracking-[0.3em] text-cyan-300/50">
-            JARVIS
-          </span>
+          <span className="hud-mono mb-1 block text-[9px] tracking-[0.3em] text-cyan-300/50">JARVIS</span>
         )}
         <span className="whitespace-pre-wrap">{content || ' '}</span>
       </div>
@@ -416,9 +654,7 @@ function Thinking() {
   return (
     <div className="flex justify-start">
       <div className="rounded-lg border border-cyan-300/25 bg-black/30 px-4 py-3">
-        <span className="hud-mono mb-1 block text-[9px] tracking-[0.3em] text-cyan-300/50">
-          JARVIS
-        </span>
+        <span className="hud-mono mb-1 block text-[9px] tracking-[0.3em] text-cyan-300/50">JARVIS</span>
         <span className="flex items-center gap-1">
           <span className="dot h-2 w-2 rounded-full bg-cyan-300" />
           <span className="dot h-2 w-2 rounded-full bg-cyan-300" />
@@ -467,10 +703,7 @@ function BootSequence() {
           <p
             key={i}
             className="hud-mono text-[10px] tracking-[0.25em] text-cyan-300/70"
-            style={{
-              animation: `rise-in 0.4s ease-out both`,
-              animationDelay: `${i * 0.45}s`,
-            }}
+            style={{ animation: `rise-in 0.4s ease-out both`, animationDelay: `${i * 0.45}s` }}
           >
             <span className="text-cyan-300/40">›</span> {l}
           </p>

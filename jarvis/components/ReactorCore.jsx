@@ -5,6 +5,9 @@ import { useEffect, useRef } from 'react';
 // The arc reactor. A canvas of concentric rings, orbiting particles and a
 // pulsing core whose colour and energy respond to `status`:
 //   idle | listening | thinking | speaking
+//
+// When `audioRef` is supplied (a ref holding { level, freq }), the core and a
+// halo of frequency bars react to live microphone audio in real time.
 const PALETTE = {
   idle: { core: [125, 249, 255], ring: [57, 199, 255], spin: 0.4, pulse: 0.5, energy: 0.55 },
   listening: { core: [93, 255, 157], ring: [80, 230, 150], spin: 0.7, pulse: 1.1, energy: 0.85 },
@@ -12,7 +15,7 @@ const PALETTE = {
   speaking: { core: [150, 235, 255], ring: [90, 210, 255], spin: 1.0, pulse: 1.8, energy: 1.0 },
 };
 
-export default function ReactorCore({ status = 'idle' }) {
+export default function ReactorCore({ status = 'idle', audioRef = null }) {
   const canvasRef = useRef(null);
   const statusRef = useRef(status);
 
@@ -30,6 +33,7 @@ export default function ReactorCore({ status = 'idle' }) {
 
     // Smoothed palette values so transitions between states glide.
     let cur = { ...PALETTE.idle, core: [...PALETTE.idle.core], ring: [...PALETTE.idle.ring] };
+    let smoothLevel = 0; // eased mic level
 
     const particles = Array.from({ length: 42 }, (_, i) => ({
       angle: (i / 42) * Math.PI * 2,
@@ -50,7 +54,6 @@ export default function ReactorCore({ status = 'idle' }) {
 
     const draw = (t) => {
       const target = PALETTE[statusRef.current] || PALETTE.idle;
-      // ease the smoothed palette toward the target
       const k = 0.06;
       cur.spin = lerp(cur.spin, target.spin, k);
       cur.pulse = lerp(cur.pulse, target.pulse, k);
@@ -60,28 +63,59 @@ export default function ReactorCore({ status = 'idle' }) {
         cur.ring[i] = lerp(cur.ring[i], target.ring[i], k);
       }
 
+      // live audio
+      const audio = audioRef && audioRef.current ? audioRef.current : null;
+      const rawLevel = audio ? audio.level || 0 : 0;
+      smoothLevel = lerp(smoothLevel, rawLevel, 0.25);
+      const freq = audio ? audio.freq : null;
+
       const C = size / 2;
       const R = size * 0.42;
       const time = t * 0.001;
       const core = `${Math.round(cur.core[0])},${Math.round(cur.core[1])},${Math.round(cur.core[2])}`;
       const ring = `${Math.round(cur.ring[0])},${Math.round(cur.ring[1])},${Math.round(cur.ring[2])}`;
 
-      // breathing pulse
+      // breathing pulse, amplified by live mic level
       const pulse = 0.5 + 0.5 * Math.sin(time * cur.pulse * 2.0);
-      const energy = cur.energy * (0.7 + 0.3 * pulse);
+      const energy = Math.min(
+        1.4,
+        cur.energy * (0.7 + 0.3 * pulse) + smoothLevel * 1.6
+      );
 
       ctx.clearRect(0, 0, size, size);
       ctx.save();
       ctx.translate(C, C);
 
       // outer glow halo
-      const halo = ctx.createRadialGradient(0, 0, R * 0.2, 0, 0, R * 1.25);
+      const halo = ctx.createRadialGradient(0, 0, R * 0.2, 0, 0, R * 1.3);
       halo.addColorStop(0, `rgba(${ring}, ${0.18 * energy})`);
       halo.addColorStop(1, 'rgba(0,0,0,0)');
       ctx.fillStyle = halo;
       ctx.beginPath();
-      ctx.arc(0, 0, R * 1.25, 0, Math.PI * 2);
+      ctx.arc(0, 0, R * 1.3, 0, Math.PI * 2);
       ctx.fill();
+
+      // live frequency-bar halo (only when we have audio data)
+      if (freq && freq.length) {
+        const bars = 72;
+        const step = Math.max(1, Math.floor(freq.length / bars));
+        ctx.save();
+        ctx.rotate(-Math.PI / 2 + time * 0.15);
+        for (let i = 0; i < bars; i++) {
+          const v = freq[i * step] / 255; // 0..1
+          if (v < 0.02) continue;
+          const a = (i / bars) * Math.PI * 2;
+          const inner = R * 1.04;
+          const len = v * R * 0.32;
+          ctx.strokeStyle = `rgba(${core}, ${0.25 + v * 0.7})`;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(a) * inner, Math.sin(a) * inner);
+          ctx.lineTo(Math.cos(a) * (inner + len), Math.sin(a) * (inner + len));
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
 
       // rotating outer ring with tick marks
       ctx.save();
@@ -139,11 +173,11 @@ export default function ReactorCore({ status = 'idle' }) {
         ctx.fill();
       }
 
-      // glowing core
-      const coreR = R * (0.34 + 0.06 * pulse);
+      // glowing core, swelling with mic level
+      const coreR = R * (0.34 + 0.06 * pulse + smoothLevel * 0.18);
       const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, coreR);
-      grad.addColorStop(0, `rgba(255,255,255,${0.95 * energy})`);
-      grad.addColorStop(0.35, `rgba(${core}, ${0.9 * energy})`);
+      grad.addColorStop(0, `rgba(255,255,255,${Math.min(1, 0.95 * energy)})`);
+      grad.addColorStop(0.35, `rgba(${core}, ${Math.min(1, 0.9 * energy)})`);
       grad.addColorStop(1, `rgba(${ring}, 0)`);
       ctx.fillStyle = grad;
       ctx.beginPath();
@@ -179,7 +213,7 @@ export default function ReactorCore({ status = 'idle' }) {
       cancelAnimationFrame(raf);
       window.removeEventListener('resize', resize);
     };
-  }, []);
+  }, [audioRef]);
 
   return (
     <canvas

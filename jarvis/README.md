@@ -11,12 +11,20 @@ Claude.
 
 ## What it does
 
-- **Talk to it.** Click the microphone and speak; JARVIS listens, thinks, and
-  replies out loud in a British-butler voice.
-- **Or type.** A full chat interface with live, streaming responses.
-- **Reactive arc reactor.** The central core shifts colour and energy as JARVIS
-  listens (green), thinks (amber), and speaks (blue).
-- **The JARVIS persona.** Composed, witty, and proactive — defined in
+- **"Hey JARVIS" — hands-free.** Flip on **AMBIENT** mode and just talk. JARVIS
+  listens for the wake word across the room, answers out loud, then keeps the
+  floor open so you can follow up without repeating yourself — a real
+  back-and-forth conversation, no buttons.
+- **Push-to-talk or type.** Prefer control? Tap the mic for one-shot voice, or
+  use the full text chat with live, streaming responses.
+- **A genuinely live arc reactor.** The Web Audio API taps your microphone, so
+  the core and a halo of frequency bars physically pulse to your real voice in
+  real time. It also shifts colour by state — green listening, amber thinking,
+  blue speaking.
+- **Real-world knowledge.** Live web search (Claude's server-side tool) lets
+  JARVIS answer current questions — news, prices, weather, recent events. He
+  also knows your local time and greets you by time of day.
+- **The JARVIS persona.** Composed, witty, proactive — defined in
   `lib/persona.js`, easy to retune.
 
 Your Anthropic API key stays on the server — the browser never sees it.
@@ -48,24 +56,41 @@ All optional, set in `.env.local`:
 | `ANTHROPIC_API_KEY`  | —                  | **Required.** Your Anthropic API key.      |
 | `JARVIS_MODEL`       | `claude-opus-4-8`  | Which Claude model powers JARVIS.          |
 | `JARVIS_ADDRESS`     | `sir`              | What JARVIS calls you ("sir", your name…). |
+| `JARVIS_WEB_SEARCH`  | `1` (on)           | Set to `0` to disable live web search.     |
+
+> If your account doesn't have web search enabled, JARVIS automatically falls
+> back to a normal answer — nothing breaks.
 
 ## Voice support
 
-Voice uses the browser's built-in Web Speech API.
+Voice uses the browser's built-in Web Speech API plus the Web Audio API.
 
-- **Speech recognition** (mic input) works in Chrome and Edge. Other browsers
-  fall back to text only — everything else still works.
+- **Speech recognition** (mic input + the "Hey JARVIS" wake word) works in
+  Chrome and Edge. Other browsers fall back to text only — everything else
+  still works.
 - **Speech synthesis** (spoken replies) works in all modern browsers. JARVIS
   prefers a British male voice if one is installed.
+- **Live reactor** uses microphone audio analysis; if the browser denies mic
+  access it simply falls back to the time-based animation.
 
-Toggle spoken replies with the **VOICE** button, top right.
+Toggle spoken replies with **VOICE** and hands-free listening with **AMBIENT**,
+top right. The first time you enable either, your browser will ask for
+microphone permission.
+
+### Wake words
+
+JARVIS responds to "JARVIS", "Hey JARVIS", or "Okay JARVIS". After he replies,
+he stays open for a follow-up for about nine seconds — so you can just keep
+talking. Edit the list in `components/Jarvis.jsx` (`WAKE_WORDS`).
 
 ## How it's built
 
 - **Next.js 14** (App Router) + **React** + **Tailwind CSS**
-- **`@anthropic-ai/sdk`** streaming from a server route (`app/api/chat/route.js`)
+- **`@anthropic-ai/sdk`** streaming from a server route (`app/api/chat/route.js`),
+  with Claude's server-side **web search** tool for live knowledge
 - Canvas-rendered arc reactor and starfield — no animation libraries
-- Web Speech API for voice in/out
+- **Web Speech API** for voice in/out and the wake word
+- **Web Audio API** (`AnalyserNode`) for real-time, audio-reactive visuals
 
 ## Project layout
 
