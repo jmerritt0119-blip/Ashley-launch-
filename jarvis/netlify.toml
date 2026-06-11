@@ -7,13 +7,17 @@
 #
 # Required: add ANTHROPIC_API_KEY in Netlify → Site settings →
 # Environment variables (Site configuration → Environment variables).
+#
+# Note: do NOT set `publish` here — the Next.js Runtime v5 manages the
+# publish directory itself. Setting `publish = ".next"` publishes the raw
+# build folder and makes every route 404.
 
 [build]
   command = "npm run build"
-  publish = ".next"
 
 [build.environment]
   NODE_VERSION = "20"
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
+
