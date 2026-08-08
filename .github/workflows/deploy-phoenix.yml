@@ -5,14 +5,17 @@ name: Deploy Phoenix
 # Same proven pattern as the old JARVIS deploy workflow. Required secrets:
 #   NETLIFY_AUTH_TOKEN  – Netlify personal access token
 #   ANTHROPIC_API_KEY   – Anthropic API key (so The Advocate can answer)
+#
+# NOTE: the stored NETLIFY_AUTH_TOKEN is currently rejected by Netlify
+# ("Unauthorized" — run 31268182775). Manual-trigger only until a fresh
+# token is saved: Netlify → User settings → Applications → New access
+# token, then GitHub → Settings → Secrets and variables → Actions →
+# update NETLIFY_AUTH_TOKEN, then run this workflow from the Actions tab.
+# (Primary hosting meanwhile is Vercel: the app is served at /phoenix
+# with pages/api/advocate.js as its AI endpoint.)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main, claude/dv-survivor-divorce-app-rnmzhi]
-    paths:
-      - "phoenix/**"
-      - ".github/workflows/deploy-phoenix.yml"
 
 concurrency:
   group: deploy-phoenix
