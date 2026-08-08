@@ -12,7 +12,24 @@ import {
   type ScanResult,
 } from "../scan";
 import { ocrImages } from "../ocr";
+import { messagesFromCsv, type ParsedMessage } from "../parseMessages";
 import type { Settings } from "../settings";
+
+/**
+ * A CSV export is imported by code, not by the AI: every row lands in the
+ * archive verbatim before a single token is spent. The model's job is then
+ * only to flag and categorize — so a model mistake can never lose a message.
+ */
+function detectCsvMessages(doc: string): ParsedMessage[] {
+  const head = doc.slice(0, 4000);
+  if (!head.includes(",")) return [];
+  try {
+    const rows = messagesFromCsv(doc);
+    return rows.length >= 3 ? rows : [];
+  } catch {
+    return [];
+  }
+}
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -33,6 +50,8 @@ export default function Scan({ settings, goSettings }: Props) {
   const [added, setAdded] = useState<string | null>(null);
   const [remaining, setRemaining] = useState<number[]>([]);
   const [loadedNote, setLoadedNote] = useState<string | null>(null);
+  const [archived, setArchived] = useState<number>(0);
+  const docRef = useRef<string>("");
   const fileRef = useRef<HTMLInputElement>(null);
   const shotRef = useRef<HTMLInputElement>(null);
   const chunksRef = useRef<string[]>([]);
@@ -41,6 +60,30 @@ export default function Scan({ settings, goSettings }: Props) {
 
   const needsKey = settings.connection === "direct" && !settings.apiKey;
   const estParts = Math.max(1, Math.ceil(text.trim().length / SCAN_CHUNK_SIZE));
+
+  /**
+   * Save every message in a CSV export to the archive immediately, by code.
+   * This happens before the AI runs, so the record is complete and permanent
+   * even if the scan is interrupted or the model misses something.
+   */
+  const archiveCsv = async (doc: string): Promise<number> => {
+    const rows = detectCsvMessages(doc);
+    if (!rows.length) return 0;
+    const now = Date.now();
+    await db.messages.bulkAdd(
+      rows.map((m) => ({
+        date: m.date,
+        sender: m.sender,
+        text: m.text,
+        source: "csv",
+        tags: [],
+        starred: false,
+        createdAt: now,
+      }))
+    );
+    setArchived(rows.length);
+    return rows.length;
+  };
 
   const onFiles = async (files: File[]) => {
     const texts: string[] = [];
@@ -119,6 +162,18 @@ export default function Scan({ settings, goSettings }: Props) {
     setError(null);
     setAdded(null);
     setRemaining([]);
+    // Deterministic first: if this is a message export, every row is saved to
+    // the archive by code before the AI reads a single line.
+    if (!resume) {
+      docRef.current = chunks.join("\n");
+      setProgress("Saving every message to your archive…");
+      try {
+        const n = await archiveCsv(docOverride ?? text);
+        if (n) setProgress(`${n.toLocaleString()} messages saved. Now reading them…`);
+      } catch {
+        /* archive failure must not block the scan */
+      }
+    }
     const abort = new AbortController();
     abortRef.current = abort;
     const failed: number[] = [];
@@ -155,6 +210,7 @@ export default function Scan({ settings, goSettings }: Props) {
               },
             ],
             caseContext: null,
+            webSearch: false,
             signal: abort.signal,
             onDelta: (d) => {
               acc += d;
@@ -226,17 +282,35 @@ export default function Scan({ settings, goSettings }: Props) {
       );
     }
     if (messages.length) {
-      await db.messages.bulkAdd(
-        messages.map((m) => ({
-          date: m.date || fallbackDate,
-          sender: m.sender,
-          text: m.text,
-          source: "scan",
-          tags: m.tags,
-          starred: true,
-          createdAt: now,
-        }))
-      );
+      // Messages already archived from the CSV get starred and tagged in
+      // place — never duplicated. Anything the archive doesn't have (a quote
+      // pulled from a journal or screenshot) is added.
+      const fresh: typeof messages = [];
+      for (const m of messages) {
+        const key = m.text.trim().slice(0, 160);
+        const existing = await db.messages.filter((row) => row.text.trim().slice(0, 160) === key).first();
+        if (existing?.id != null) {
+          await db.messages.update(existing.id, {
+            starred: true,
+            tags: Array.from(new Set([...(existing.tags || []), ...m.tags])),
+          });
+        } else {
+          fresh.push(m);
+        }
+      }
+      if (fresh.length) {
+        await db.messages.bulkAdd(
+          fresh.map((m) => ({
+            date: m.date || fallbackDate,
+            sender: m.sender,
+            text: m.text,
+            source: "scan",
+            tags: m.tags,
+            starred: true,
+            createdAt: now,
+          }))
+        );
+      }
     }
     setAdded(
       `Added ${incidents.length} incident${incidents.length === 1 ? "" : "s"} and ${messages.length} flagged message${
@@ -335,6 +409,14 @@ export default function Scan({ settings, goSettings }: Props) {
           />
         </div>
         {progress && <p className="muted small" style={{ marginTop: 8 }}>{progress}</p>}
+        {archived > 0 && (
+          <div className="notice calm" style={{ marginTop: 10 }}>
+            <strong>{archived.toLocaleString()} messages saved to your archive.</strong> Every
+            single one — saved exactly as written, by the app itself, before the AI read anything.
+            They're searchable now and they're in your attorney export. The AI is reading them to
+            flag the ones that matter.
+          </div>
+        )}
         <p className="muted small" style={{ marginTop: 8 }}>
           Deep scans always run on Claude Opus 5. A very large export takes a while — keep this
           tab open; you can stop anytime and finish later, and results appear below as each part
