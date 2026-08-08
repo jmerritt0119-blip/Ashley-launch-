@@ -4,7 +4,8 @@ import { db, exportAllData, importAllData, wipeAllData } from "../db";
 import { decryptJson, encryptJson, hashPin, randomSaltHex } from "../crypto";
 import { MODEL_OPTIONS, type Settings } from "../settings";
 import { biometricsSupported, enrollBiometric } from "../webauthn";
-import { makeVaultCode, normalizeVaultCode, pullVault, pushVault } from "../sync";
+import { makeVaultCode, normalizeVaultCode, pullVault, pushVault, recoverPassphrase } from "../sync";
+import { makeRecoveryKey } from "../crypto";
 
 interface Props {
   settings: Settings;
@@ -26,20 +27,72 @@ export default function SettingsPage({ settings, update }: Props) {
   const [vaultMsg, setVaultMsg] = useState<string | null>(null);
   const vaultSaved = useLiveQuery(() => db.kv.get("vaultSavedAt"), []);
 
+  const [recoveryKey, setRecoveryKey] = useState("");
+  const [recoverInput, setRecoverInput] = useState("");
+
+  const downloadKit = (code: string, key: string) => {
+    const text = `PHOENIX RECOVERY KIT
+Keep this somewhere safe that he cannot reach — a locked drawer, a trusted
+person, a safe deposit box. A photo of this page counts. Anyone holding BOTH
+lines below can open your case, so store it like you'd store a spare house key.
+
+Vault code:   ${code}
+Recovery key: ${key}
+
+TO OPEN YOUR CASE ON ANOTHER DEVICE
+Go to https://phoenix-case-builder.netlify.app on that device, open Settings,
+enter the vault code and your passphrase, and tap "Load my case onto this device."
+
+IF YOU FORGET YOUR PASSPHRASE
+Open Settings on any device, enter the vault code, tap "I forgot my passphrase,"
+and enter the recovery key above. It will give your passphrase back to you.
+
+Created ${new Date().toLocaleString()}
+`;
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "phoenix-recovery-kit.txt";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const turnOnVault = async () => {
     if (vaultPass.length < 8) {
-      return setVaultMsg("Pick a passphrase of at least 8 characters first — it's the only key.");
+      return setVaultMsg("Pick a passphrase of at least 8 characters first.");
     }
     const code = settings.vaultCode || makeVaultCode();
+    const key = settings.vaultRecoveryKey || makeRecoveryKey();
     setVaultBusy(true);
     setVaultMsg("Encrypting everything on this device…");
     try {
-      const savedAt = await pushVault(code, vaultPass, settings.vaultIncludeFiles);
-      update({ vaultCode: code });
+      const savedAt = await pushVault(code, vaultPass, settings.vaultIncludeFiles, key);
+      update({ vaultCode: code, vaultRecoveryKey: key });
+      setRecoveryKey(key);
       await db.kv.put({ key: "vaultSavedAt", value: savedAt });
-      setVaultMsg("Saved to your vault. Your code is below — that plus the passphrase opens it anywhere.");
+      setVaultMsg("Saved. Save your Recovery Kit below — it's how you get back in if you forget the passphrase.");
     } catch (e: any) {
       setVaultMsg(e?.message || "Couldn't save to the vault.");
+    } finally {
+      setVaultBusy(false);
+    }
+  };
+
+  const doRecover = async () => {
+    const code = normalizeVaultCode(joinCode || settings.vaultCode || "");
+    if (!code) return setVaultMsg("Enter the vault code from your Recovery Kit first.");
+    if (!recoverInput.trim()) return setVaultMsg("Enter the recovery key from your Recovery Kit.");
+    setVaultBusy(true);
+    setVaultMsg("Checking your recovery key…");
+    try {
+      const pass = await recoverPassphrase(code, recoverInput);
+      setVaultPass(pass);
+      setVaultMsg(
+        `Recovered. Your passphrase is: ${pass} — it's filled in above, so now tap "Load my case onto this device."`
+      );
+    } catch (e: any) {
+      setVaultMsg(e?.message || "Couldn't recover with that key.");
     } finally {
       setVaultBusy(false);
     }
@@ -333,6 +386,32 @@ export default function SettingsPage({ settings, update }: Props) {
               office — go to the same website there, open Settings, enter this code and your
               passphrase, and tap "Load my case onto this device."
             </p>
+            {(recoveryKey || settings.vaultRecoveryKey) && (
+              <>
+                <div className="small" style={{ fontWeight: 700, margin: "12px 0 4px" }}>
+                  Your recovery key — this is your way back in if you forget the passphrase
+                </div>
+                <div
+                  style={{
+                    fontFamily: "ui-monospace, monospace",
+                    fontSize: 14,
+                    fontWeight: 700,
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {recoveryKey || settings.vaultRecoveryKey}
+                </div>
+                <button
+                  className="btn secondary sm"
+                  style={{ marginTop: 8 }}
+                  onClick={() =>
+                    downloadKit(settings.vaultCode, recoveryKey || settings.vaultRecoveryKey)
+                  }
+                >
+                  ⬇ Save my Recovery Kit
+                </button>
+              </>
+            )}
             <p className="small muted" style={{ margin: "6px 0 0" }}>
               Anyone with both the code and the passphrase can read everything, so send them
               separately (code by email, passphrase by phone) and only to people you choose.
@@ -374,6 +453,25 @@ export default function SettingsPage({ settings, update }: Props) {
             onBlur={(e) => setJoinCode(normalizeVaultCode(e.target.value))}
           />
         </label>
+
+        <details className="panel" style={{ marginTop: 12, padding: 12 }}>
+          <summary>I forgot my passphrase</summary>
+          <p className="muted small">
+            That's what the Recovery Kit is for. Enter your vault code above, then the recovery key
+            from your kit here — it gives your passphrase back.
+          </p>
+          <label className="field">
+            <span>Recovery key (the words from your kit)</span>
+            <input
+              placeholder="cedar-harbor-mica-…"
+              value={recoverInput}
+              onChange={(e) => setRecoverInput(e.target.value)}
+            />
+          </label>
+          <button className="btn secondary" disabled={vaultBusy} onClick={() => void doRecover()}>
+            Get my passphrase back
+          </button>
+        </details>
 
         {vaultMsg && <div className="notice calm">{vaultMsg}</div>}
       </div>

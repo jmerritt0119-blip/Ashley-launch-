@@ -16,8 +16,15 @@ export interface Settings {
   displayName: string;
   /** Texas county — lets The Advocate use the right court's local practice. */
   county: string;
+  /**
+   * Which sender names/numbers in an imported thread are HIM. Without this the
+   * app can't tell his words from hers in a phone-number-only export — and his
+   * words are the ones that carry weight in court.
+   */
+  hisNames: string;
   /** Cloud vault: multi-device + attorney sharing. Empty = not enabled. */
   vaultCode: string;
+  vaultRecoveryKey: string;
   vaultIncludeFiles: boolean;
 }
 
@@ -60,7 +67,9 @@ const DEFAULTS: Settings = {
   safetyAcknowledged: false,
   displayName: "",
   county: "",
+  hisNames: "",
   vaultCode: "",
+  vaultRecoveryKey: "",
   vaultIncludeFiles: true,
 };
 

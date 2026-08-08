@@ -36,9 +36,10 @@ const today = () => new Date().toISOString().slice(0, 10);
 interface Props {
   settings: Settings;
   goSettings: () => void;
+  update: (patch: Partial<Settings>) => void;
 }
 
-export default function Scan({ settings, goSettings }: Props) {
+export default function Scan({ settings, goSettings, update }: Props) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
@@ -51,6 +52,7 @@ export default function Scan({ settings, goSettings }: Props) {
   const [remaining, setRemaining] = useState<number[]>([]);
   const [loadedNote, setLoadedNote] = useState<string | null>(null);
   const [archived, setArchived] = useState<number>(0);
+  const [senders, setSenders] = useState<{ name: string; count: number }[]>([]);
   const docRef = useRef<string>("");
   const fileRef = useRef<HTMLInputElement>(null);
   const shotRef = useRef<HTMLInputElement>(null);
@@ -82,8 +84,37 @@ export default function Scan({ settings, goSettings }: Props) {
       }))
     );
     setArchived(rows.length);
+
+    // Who is in this thread? A phone-number-only export gives no clue which
+    // side is his, and his words are the ones that carry weight in court.
+    const counts = new Map<string, number>();
+    for (const m of rows) counts.set(m.sender, (counts.get(m.sender) || 0) + 1);
+    setSenders(
+      [...counts.entries()]
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 8)
+    );
     return rows.length;
   };
+
+  const markHim = (name: string) => {
+    const current = settings.hisNames
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const next = current.includes(name)
+      ? current.filter((n) => n !== name)
+      : [...current, name];
+    update({ hisNames: next.join(", ") });
+  };
+
+  const isHim = (name: string) =>
+    settings.hisNames
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean)
+      .includes(name.trim().toLowerCase());
 
   const onFiles = async (files: File[]) => {
     const texts: string[] = [];
@@ -415,6 +446,34 @@ export default function Scan({ settings, goSettings }: Props) {
             single one — saved exactly as written, by the app itself, before the AI read anything.
             They're searchable now and they're in your attorney export. The AI is reading them to
             flag the ones that matter.
+          </div>
+        )}
+
+        {senders.length > 1 && (
+          <div className="panel" style={{ marginTop: 10 }}>
+            <h2>Which one is him?</h2>
+            <p className="muted small" style={{ marginTop: 0 }}>
+              Tap his name or number. His own words are the strongest evidence you have — Texas
+              courts treat them as statements against him, not hearsay — so telling the app who he
+              is makes everything from here sharper.
+            </p>
+            <div className="quick-actions">
+              {senders.map((s) => (
+                <button
+                  key={s.name}
+                  className={isHim(s.name) ? "btn sm" : "btn secondary sm"}
+                  onClick={() => markHim(s.name)}
+                >
+                  {isHim(s.name) ? "✓ " : ""}
+                  {s.name} ({s.count.toLocaleString()})
+                </button>
+              ))}
+            </div>
+            {settings.hisNames && (
+              <p className="muted small" style={{ marginBottom: 0 }}>
+                Got it — messages from {settings.hisNames} are treated as his.
+              </p>
+            )}
           </div>
         )}
         <p className="muted small" style={{ marginTop: 8 }}>

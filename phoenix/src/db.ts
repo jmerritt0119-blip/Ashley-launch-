@@ -260,14 +260,46 @@ export async function importAllData(data: any): Promise<void> {
       db.kv,
     ],
     async () => {
-      if (data.incidents?.length) await db.incidents.bulkAdd(stripIds(data.incidents));
-      if (data.messages?.length) await db.messages.bulkAdd(stripIds(data.messages));
-      if (evidence.length) await db.evidence.bulkAdd(stripIds(evidence));
-      if (data.financials?.length) await db.financials.bulkAdd(stripIds(data.financials));
-      if (data.chat?.length) await db.chat.bulkAdd(stripIds(data.chat));
-      if (data.dates?.length) await db.dates.bulkAdd(stripIds(data.dates));
-      if (data.documents?.length) await db.documents.bulkAdd(stripIds(data.documents));
-      if (data.violations?.length) await db.violations.bulkAdd(stripIds(data.violations));
+      /**
+       * Restores MERGE — they never delete. Anything already on this device
+       * stays exactly as it is. To make restoring twice (or syncing a device
+       * that already holds most of the case) safe, rows that are already
+       * present are skipped rather than duplicated: her archive must not
+       * double every time she pulls from the vault.
+       */
+      const addNew = async <T extends object>(
+        table: { toArray: () => Promise<T[]>; bulkAdd: (rows: T[]) => Promise<any> },
+        incoming: T[],
+        signature: (row: T) => string
+      ) => {
+        if (!incoming?.length) return;
+        const existing = new Set((await table.toArray()).map(signature));
+        const fresh = stripIds(incoming).filter((row: T) => !existing.has(signature(row)));
+        if (fresh.length) await table.bulkAdd(fresh);
+      };
+
+      await addNew(db.incidents, data.incidents || [], (i: any) =>
+        `${i.date}|${i.time || ""}|${(i.title || "").trim()}|${(i.narrative || "").slice(0, 200)}`
+      );
+      await addNew(db.messages, data.messages || [], (m: any) =>
+        `${m.date}|${m.sender}|${(m.text || "").slice(0, 300)}`
+      );
+      await addNew(db.evidence, evidence, (e: any) =>
+        `${e.date}|${(e.title || "").trim()}|${e.fileName || ""}|${e.notes || ""}`
+      );
+      await addNew(db.financials, data.financials || [], (f: any) =>
+        `${f.type}|${f.name}|${f.value}|${f.owner || ""}`
+      );
+      await addNew(db.chat, data.chat || [], (c: any) => `${c.createdAt}|${c.role}`);
+      await addNew(db.dates, data.dates || [], (d: any) =>
+        `${d.date}|${d.time || ""}|${d.title}|${d.type}`
+      );
+      await addNew(db.documents, data.documents || [], (d: any) =>
+        `${d.title}|${(d.content || "").slice(0, 300)}`
+      );
+      await addNew(db.violations, data.violations || [], (v: any) =>
+        `${v.date}|${v.time || ""}|${v.type}|${(v.description || "").slice(0, 200)}`
+      );
       if (data.kv?.length) await db.kv.bulkPut(data.kv);
     }
   );

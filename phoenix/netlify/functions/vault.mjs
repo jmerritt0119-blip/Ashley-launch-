@@ -38,15 +38,32 @@ export default async (req) => {
     return json({ error: 'The vault is not configured on this site yet.' }, 503);
   }
 
+  // Every save is kept as a numbered version and the pointer moved forward.
+  // She is told to share the vault code with her attorney, so the code cannot
+  // be treated as a write credential: anyone holding it — including an abuser
+  // who photographs her Recovery Kit — must not be able to destroy or silently
+  // replace her case. Old versions survive any overwrite, and there is no
+  // delete route at all.
+  const KEEP_VERSIONS = 10;
+
   if (req.method === 'GET') {
-    const record = await store.get(code, { type: 'json' });
+    const wanted = url.searchParams.get('version');
+    const head = await store.get(`${code}/head`, { type: 'json' });
+    const version = wanted ? parseInt(wanted, 10) : head?.version;
+    let record = version ? await store.get(`${code}/v${version}`, { type: 'json' }) : null;
+    // Carry forward vaults written before versioning existed — a survivor who
+    // already saved her case must never find it missing after an upgrade.
+    if (!record && !wanted) {
+      const legacy = await store.get(code, { type: 'json' });
+      if (legacy) return json({ ...legacy, version: 0, latestVersion: 0, legacy: true });
+    }
     if (!record) {
       return json(
         { error: 'No vault found with that code. Check for typos, or make sure it was saved from the other device.' },
         404
       );
     }
-    return json(record);
+    return json({ ...record, version, latestVersion: head?.version ?? version });
   }
 
   if (req.method === 'PUT' || req.method === 'POST') {
@@ -57,29 +74,39 @@ export default async (req) => {
       return json({ error: 'Malformed request.' }, 400);
     }
     // Ciphertext only. If this does not look like our encrypted envelope, refuse
-    // it — the server must never become a place plaintext can land.
+    // it — the server must never become a place plaintext can land. The field
+    // names here must match what crypto.ts `encryptJson` actually produces:
+    // { format, v, salt, iv, data }.
     if (
       !body ||
       body.format !== 'phoenix-encrypted' ||
-      typeof body.ciphertext !== 'string' ||
+      typeof body.data !== 'string' ||
       typeof body.salt !== 'string' ||
       typeof body.iv !== 'string'
     ) {
       return json({ error: 'Only encrypted backups can be stored.' }, 400);
     }
-    if (body.ciphertext.length > MAX_BYTES) {
+    if (body.data.length > MAX_BYTES) {
       return json(
         { error: 'That backup is too large to sync. Turn off "include photos and videos" and try again.' },
         413
       );
     }
-    await store.setJSON(code, { ...body, savedAt: Date.now() });
-    return json({ ok: true, savedAt: Date.now() });
-  }
-
-  if (req.method === 'DELETE') {
-    await store.delete(code);
-    return json({ ok: true });
+    const head = await store.get(`${code}/head`, { type: 'json' });
+    // A pre-versioning vault becomes v1's predecessor rather than being lost.
+    if (!head) {
+      const legacy = await store.get(code, { type: 'json' });
+      if (legacy) await store.setJSON(`${code}/v0`, { ...legacy, version: 0 });
+    }
+    const version = (head?.version ?? 0) + 1;
+    const savedAt = Date.now();
+    await store.setJSON(`${code}/v${version}`, { ...body, savedAt, version });
+    await store.setJSON(`${code}/head`, { version, savedAt });
+    // Prune well beyond the retention window so a wipe attempt still leaves
+    // every recent good copy intact.
+    const stale = version - KEEP_VERSIONS;
+    if (stale > 0) await store.delete(`${code}/v${stale}`).catch(() => {});
+    return json({ ok: true, savedAt, version });
   }
 
   return json({ error: 'Method not allowed' }, 405);

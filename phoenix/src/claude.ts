@@ -60,7 +60,7 @@ export const QUICK_ACTIONS: { label: string; prompt: string }[] = [
 const trunc = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "…" : s);
 
 /** Compact plain-text snapshot of the case for AI context. */
-export async function buildCaseSnapshot(county?: string): Promise<string> {
+export async function buildCaseSnapshot(county?: string, hisNames?: string): Promise<string> {
   const todayStr = new Date().toISOString().slice(0, 10);
   // Opus 5 has a 1M-token window — give it the whole case, not a sample.
   // Every incident and every flagged message goes in; the full archive is
@@ -87,6 +87,11 @@ export async function buildCaseSnapshot(county?: string): Promise<string> {
       ? `Jurisdiction: ${county} County, Texas — use this county's courts, local rules and standing orders; search for them when they matter.`
       : `Jurisdiction: Texas (county not set — ask her which county her case is in when local practice matters).`
   );
+  if (hisNames?.trim()) {
+    lines.push(
+      `WHO IS WHO: messages whose sender is one of [${hisNames}] are from HIM — the abusive party. Everything else is from her or a third party. His own statements are admissible against him as party-opponent statements and are the strongest material in this file; weigh them accordingly and quote them exactly.`
+    );
+  }
   lines.push(
     `Totals: ${incidents.length} incidents, ${totalMessages.toLocaleString()} messages archived (${starredAll.length} flagged as significant), ${evidence.length} evidence items, ${financials.length} financial entries.`
   );
@@ -305,6 +310,8 @@ async function viaDirect(opts: AdvocateOpts): Promise<string> {
     max_tokens: 16000,
     system,
     messages: opts.history.map((t) => ({ role: t.role, content: t.content })),
+    thinking: { type: "adaptive" },
+    output_config: { effort: opts.webSearch === false ? "high" : "xhigh" },
     ...(opts.webSearch === false
       ? {}
       : { tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 8 }] }),

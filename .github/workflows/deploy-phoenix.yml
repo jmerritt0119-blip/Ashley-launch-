@@ -74,13 +74,30 @@ jobs:
           CODE="ZZZZ-TEST-$(date +%N | cut -c1-4)-CHEK"
           vput=$(curl -s -o /tmp/v.out -w '%{http_code}' -m 25 -X PUT \
             -H 'content-type: application/json' \
-            --data '{"format":"phoenix-encrypted","ciphertext":"ZmFrZQ==","salt":"aa","iv":"bb"}' \
+            --data '{"format":"phoenix-encrypted","v":1,"salt":"c2FsdA==","iv":"aXYxMjM=","data":"ZmFrZQ=="}' \
             "$URL/api/vault?code=$CODE" || echo "000")
           echo "PUT /api/vault -> HTTP $vput"
           vget=$(curl -s -o /tmp/vg.out -w '%{http_code}' -m 25 "$URL/api/vault?code=$CODE" || echo "000")
           echo "GET /api/vault -> HTTP $vget"
           head -c 200 /tmp/vg.out; echo
-          curl -s -o /dev/null -m 25 -X DELETE "$URL/api/vault?code=$CODE" || true
+
+          # An overwrite must not destroy the previous copy, and there must be
+          # no way at all to delete a survivor's vault over the network.
+          curl -s -o /dev/null -m 25 -X PUT -H 'content-type: application/json' \
+            --data '{"format":"phoenix-encrypted","v":1,"salt":"c2FsdA==","iv":"aXYxMjM=","data":"c2Vjb25k"}' \
+            "$URL/api/vault?code=$CODE" || true
+          v1=$(curl -s -m 25 "$URL/api/vault?code=$CODE&version=1" || echo "")
+          echo "--- version 1 after overwrite ---"; echo "$v1" | head -c 160; echo
+          if ! echo "$v1" | grep -q "ZmFrZQ=="; then
+            echo "::error::An overwrite destroyed the previous vault version."
+            exit 1
+          fi
+          dcode=$(curl -s -o /dev/null -w '%{http_code}' -m 25 -X DELETE "$URL/api/vault?code=$CODE" || echo "000")
+          echo "DELETE /api/vault -> HTTP $dcode (expect 405)"
+          if [ "$dcode" = "200" ]; then
+            echo "::error::Vault can be deleted over the network."
+            exit 1
+          fi
           if [ "$vput" != "200" ] || [ "$vget" != "200" ]; then
             echo "::error::Cloud vault round-trip failed — multi-device sync would not work."
             cat /tmp/v.out; echo
