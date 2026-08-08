@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { applyChrome, loadSettings, quickExit, saveSettings, type Settings } from "./settings";
 import { PaneActive } from "./paneContext";
+import { onRepairProgress, type RepairProgress } from "./autoRepair";
 import PinGate from "./components/PinGate";
 import SafetyNotice from "./components/SafetyNotice";
 import Dashboard from "./components/Dashboard";
@@ -47,6 +48,30 @@ const VIEWS: { key: string; label: string }[] = [
   { key: "resources", label: "Resources" },
   { key: "settings", label: "Settings" },
 ];
+
+/**
+ * Says what the app is doing while it tidies a duplicated archive.
+ *
+ * Measured at roughly 80 seconds on an archive of 119,600 rows. Eighty seconds
+ * of a message count silently changing is indistinguishable from the app being
+ * broken, and she has had enough of that feeling.
+ */
+function RepairBanner() {
+  const [p, setP] = useState<RepairProgress | null>(null);
+  useEffect(() => onRepairProgress(setP), []);
+  if (!p?.running) return null;
+  const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
+  return (
+    <div className="notice calm no-print" style={{ margin: "0 0 12px" }}>
+      <strong>Tidying your archive…</strong> The same messages had been imported
+      more than once. Removing the duplicates now
+      {p.total ? ` — ${pct}% done` : ""}. This takes a minute or two the first
+      time. <strong>Nothing is being lost</strong>, and a full backup was saved
+      before it started. You can carry on using the app, or close it — it picks
+      up where it left off.
+    </div>
+  );
+}
 
 /**
  * Renders a view once it has been visited, then keeps it alive off-screen.
@@ -195,6 +220,7 @@ export default function App() {
       </nav>
 
       <main className="main">
+        <RepairBanner />
         <Pane on={view} me="dashboard" mounted={mounted}>
           <Dashboard go={go} displayName={settings.displayName} settings={settings} />
         </Pane>
