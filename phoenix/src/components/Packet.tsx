@@ -6,6 +6,8 @@ import {
   exportDatesCsv,
   exportEvidenceCsv,
   exportEvidenceFilesZip,
+  exportEverythingZip,
+  exportJournalCsv,
   exportFinancialsCsv,
   exportIncidentsCsv,
   exportMessagesCsv,
@@ -18,6 +20,27 @@ interface Props {
 
 export default function Packet({ displayName }: Props) {
   const [zipStatus, setZipStatus] = useState<string | null>(null);
+  const [allStatus, setAllStatus] = useState<string | null>(null);
+  const [allDone, setAllDone] = useState<string | null>(null);
+
+  const downloadEverything = async () => {
+    setAllDone(null);
+    try {
+      setAllStatus("Gathering your case…");
+      const { files, bytes } = await exportEverythingZip((done, total) =>
+        setAllStatus(`Packaging ${Math.min(done + 1, total)} of ${total}…`)
+      );
+      const mb = Math.max(0.1, Math.round((bytes / 1_048_576) * 10) / 10);
+      setAllDone(
+        `Done — ${files} files, ${mb} MB. It's in your Downloads (Files app on a phone). ` +
+          `Nothing was removed from the app; this is a copy.`
+      );
+    } catch (e: any) {
+      setAllDone("Couldn't build the file: " + (e?.message || "unknown error") + ". Nothing was lost — try again.");
+    } finally {
+      setAllStatus(null);
+    }
+  };
 
   const downloadEvidenceFiles = async () => {
     try {
@@ -66,6 +89,20 @@ export default function Packet({ displayName }: Props) {
         <button className="btn" onClick={() => window.print()}>
           Print / Save as PDF
         </button>
+        <div className="panel" style={{ marginTop: 14, borderColor: "var(--accent)", borderWidth: 2 }}>
+          <h2>Everything, in one file</h2>
+          <p className="muted small">
+            Your whole case as a single .zip: every record as a spreadsheet, your journal and
+            documents as readable text, every photo, video and recording numbered to match, and a
+            README explaining what each part is. This is the one to hand an attorney — and the one
+            to keep somewhere safe. It is built entirely on this device.
+          </p>
+          <button className="btn" onClick={() => void downloadEverything()} disabled={!!allStatus}>
+            {allStatus || "⬇ Download my entire case (.zip)"}
+          </button>
+          {allDone && <div className="notice calm" style={{ marginTop: 10 }}>{allDone}</div>}
+        </div>
+
         <div className="panel" style={{ marginTop: 14 }}>
           <h2>Data files for your attorney</h2>
           <p className="muted small">
@@ -90,6 +127,9 @@ export default function Packet({ displayName }: Props) {
             </button>
             <button className="btn secondary sm" onClick={() => void exportDatesCsv()}>
               ⬇ Key dates (.csv)
+            </button>
+            <button className="btn secondary sm" onClick={() => void exportJournalCsv()}>
+              ⬇ Journal (.csv)
             </button>
           </div>
           <hr className="hr" />
