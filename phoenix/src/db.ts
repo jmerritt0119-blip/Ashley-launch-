@@ -45,6 +45,12 @@ export interface Incident {
 export interface Msg {
   id?: number;
   date: string; // YYYY-MM-DD or full ISO
+  /**
+   * "HH:MM" when the export carried a time. Optional because messages
+   * imported before times were preserved genuinely do not have one — and a
+   * guessed time would be worse than none.
+   */
+  time?: string;
   sender: string;
   text: string;
   source: string; // paste | csv | manual

@@ -108,6 +108,7 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     await db.messages.bulkAdd(
       rows.map((m) => ({
         date: m.date,
+        time: m.time || undefined,
         sender: m.sender,
         text: m.text,
         source: "csv",
