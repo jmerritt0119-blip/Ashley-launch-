@@ -1,12 +1,20 @@
+import { useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../db";
+import { QUICK_ACTIONS } from "../claude";
+import { handoff } from "../handoff";
 
 interface Props {
   go: (view: string) => void;
   displayName: string;
 }
 
+const HERO_CHIPS = ["Protect my daughter", "Prep for a custody hearing", "What am I missing?"];
+
 export default function Dashboard({ go, displayName }: Props) {
+  const [ask, setAsk] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
+
   const counts = useLiveQuery(async () => {
     const today = new Date().toISOString().slice(0, 10);
     const [incidents, messages, starred, evidence, financials, nextDates, lastBackup] =
@@ -30,6 +38,22 @@ export default function Dashboard({ go, displayName }: Props) {
     };
   });
 
+  const askNow = (q: string) => {
+    const question = q.trim();
+    if (!question) return;
+    handoff.ask = question;
+    setAsk("");
+    go("advocate");
+  };
+
+  const onFiles = async (files: File[]) => {
+    if (!files.length) return;
+    const texts: string[] = [];
+    for (const f of files) texts.push(await f.text());
+    handoff.scanText = texts.join("\n\n");
+    go("scan");
+  };
+
   const empty =
     counts && counts.incidents + counts.messages + counts.evidence + counts.financials === 0;
 
@@ -42,6 +66,64 @@ export default function Dashboard({ go, displayName }: Props) {
         Every entry you make here is a brick in the case. Small, steady, documented — that's how
         it's won.
       </p>
+
+      <div className="panel">
+        <h2>Ask The Advocate — anything, any hour</h2>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            askNow(ask);
+          }}
+        >
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              style={{ flex: 1 }}
+              placeholder="Something he did today, a hearing coming up, a letter you got…"
+              value={ask}
+              onChange={(e) => setAsk(e.target.value)}
+            />
+            <button className="btn" type="submit" disabled={!ask.trim()}>
+              Ask
+            </button>
+          </div>
+        </form>
+        <div className="quick-actions" style={{ marginTop: 10 }}>
+          {QUICK_ACTIONS.filter((qa) => HERO_CHIPS.includes(qa.label)).map((qa) => (
+            <button key={qa.label} className="btn secondary sm" onClick={() => askNow(qa.prompt)}>
+              {qa.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="panel">
+        <h2>Have his texts? Upload them — the AI finds the abuse</h2>
+        <p className="muted small" style={{ marginTop: 0 }}>
+          A message export (.csv), emails, a journal — any size, even years of texts. Every line is
+          read, every instance of abuse is found and filed for court. You approve before anything
+          saves.
+        </p>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="btn" onClick={() => fileRef.current?.click()}>
+            Upload files
+          </button>
+          <button className="btn secondary" onClick={() => go("scan")}>
+            Paste text or screenshots instead
+          </button>
+        </div>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".txt,.csv,.tsv,.log,.md,.json,text/plain,text/csv"
+          multiple
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const files = Array.from(e.target.files || []);
+            void onFiles(files);
+            e.target.value = "";
+          }}
+        />
+      </div>
 
       {counts?.next && (
         <div className="notice" style={{ cursor: "pointer" }} onClick={() => go("dates")}>
@@ -93,8 +175,8 @@ export default function Dashboard({ go, displayName }: Props) {
               who saw it. (<a onClick={() => go("incidents")} style={{ cursor: "pointer" }}>Incident log</a>)
             </li>
             <li>
-              <strong>Bring in the texts.</strong> Paste or import the conversations that show
-              threats, control, or admissions. Star the ones that matter. (
+              <strong>Bring in the texts.</strong> Upload the export above, or paste conversations
+              that show threats, control, or admissions. Star the ones that matter. (
               <a onClick={() => go("messages")} style={{ cursor: "pointer" }}>Messages</a>)
             </li>
             <li>
@@ -125,14 +207,11 @@ export default function Dashboard({ go, displayName }: Props) {
           <button className="btn secondary sm" onClick={() => go("messages")}>
             + Import messages
           </button>
-          <button className="btn secondary sm" onClick={() => go("scan")}>
-            Deep-scan a report
+          <button className="btn secondary sm" onClick={() => go("dates")}>
+            + Add a court date
           </button>
           <button className="btn secondary sm" onClick={() => go("packet")}>
             Build attorney packet
-          </button>
-          <button className="btn secondary sm" onClick={() => go("advocate")}>
-            Ask The Advocate
           </button>
         </div>
         <p className="muted small" style={{ marginTop: 8 }}>

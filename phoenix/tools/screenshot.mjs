@@ -63,7 +63,7 @@ await page.evaluate(async () => {
   await put("evidence", [
     { date: "2026-06-09", title: "Wall damage after chair incident", kind: "photo", notes: "Taken morning after; originals in iCloud album", tags: [], createdAt: now },
   ]);
-  localStorage.setItem("phx_settings_v1", JSON.stringify({ safetyAcknowledged: false, displayName: "Ashley", theme: "light", connection: "server", model: "claude-opus-5", shareContext: true, discreet: false, autoLock: false, pinHash: null, pinSalt: null, bioCredId: null, apiKey: "" }));
+  localStorage.setItem("phx_settings_v1", JSON.stringify({ safetyAcknowledged: false, displayName: "Sam", theme: "light", connection: "server", model: "claude-opus-5", shareContext: true, discreet: false, autoLock: false, pinHash: null, pinSalt: null, bioCredId: null, apiKey: "" }));
 });
 await page.reload({ waitUntil: "networkidle" });
 await page.waitForTimeout(400);
@@ -82,7 +82,7 @@ await page.waitForTimeout(500);
 await page.screenshot({ path: `${OUT}/3-incidents.png` });
 
 // 4. Advocate
-await page.click(".nav >> text=Advocate");
+await page.click(".nav >> text=Ask the AI");
 await page.waitForTimeout(400);
 await page.screenshot({ path: `${OUT}/4-advocate.png` });
 

@@ -21,15 +21,15 @@ import SettingsPage from "./components/SettingsPage";
 
 const VIEWS: { key: string; label: string }[] = [
   { key: "dashboard", label: "Home" },
+  { key: "advocate", label: "Ask the AI" },
+  { key: "scan", label: "Upload & scan" },
   { key: "incidents", label: "Incidents" },
   { key: "custody", label: "Custody" },
   { key: "messages", label: "Messages" },
-  { key: "scan", label: "Deep scan" },
   { key: "evidence", label: "Evidence" },
-  { key: "financials", label: "Financials" },
   { key: "dates", label: "Dates" },
   { key: "timeline", label: "Timeline" },
-  { key: "advocate", label: "Advocate" },
+  { key: "financials", label: "Financials" },
   { key: "documents", label: "Documents" },
   { key: "packet", label: "Packet" },
   { key: "safety", label: "Safety plan" },

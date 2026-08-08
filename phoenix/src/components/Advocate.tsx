@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../db";
 import { buildCaseSnapshot, streamAdvocate, QUICK_ACTIONS, type AdvocateTurn } from "../claude";
+import { handoff } from "../handoff";
 import type { Settings } from "../settings";
 
 interface Props {
@@ -31,6 +32,22 @@ export default function Advocate({ settings, goSettings }: Props) {
   }, []);
 
   const needsKey = settings.connection === "direct" && !settings.apiKey;
+
+  // The home screen's Ask box hands the question here — send it the moment
+  // the conversation has loaded, no extra tap.
+  const [pendingAsk, setPendingAsk] = useState<string | null>(() => {
+    const q = handoff.ask;
+    handoff.ask = null;
+    return q;
+  });
+  useEffect(() => {
+    if (pendingAsk && chat !== undefined && !busy && !needsKey) {
+      const q = pendingAsk;
+      setPendingAsk(null);
+      void send(q);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingAsk, chat === undefined, busy, needsKey]);
 
   const send = async (text: string) => {
     const content = text.trim();
