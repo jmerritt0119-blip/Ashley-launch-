@@ -10,6 +10,37 @@ import { takeSnapshot } from "./safety";
 
 const MARK = "autoDedupeAtCount";
 
+/**
+ * Progress, broadcast so the app can say what it is doing.
+ *
+ * Measured at her scale — 119,600 rows down to 29,900 — this takes about 80
+ * seconds. Eighty seconds of a message count visibly changing with no
+ * explanation is exactly the "it looks broken" feeling this whole app has been
+ * fighting. So it announces itself.
+ */
+export interface RepairProgress {
+  running: boolean;
+  done: number;
+  total: number;
+}
+
+const EVT = "phx-repair-progress";
+
+function emit(p: RepairProgress) {
+  try {
+    window.dispatchEvent(new CustomEvent(EVT, { detail: p }));
+  } catch {
+    /* not in a browser (tests) */
+  }
+}
+
+/** Subscribe to repair progress. Returns an unsubscribe function. */
+export function onRepairProgress(cb: (p: RepairProgress) => void): () => void {
+  const h = (e: Event) => cb((e as CustomEvent).detail as RepairProgress);
+  window.addEventListener(EVT, h);
+  return () => window.removeEventListener(EVT, h);
+}
+
 export interface RepairReport {
   removed: number;
   kept: number;
@@ -32,12 +63,18 @@ export async function autoRepair(
     const mark = await db.kv.get(MARK);
     if (mark?.value === count) return null; // nothing has changed since last time
 
+    emit({ running: true, done: 0, total: 0 });
+
     // A restore point BEFORE anything is removed. If this repair is ever
     // wrong, every deleted row is still recoverable from here.
     await takeSnapshot("before removing duplicate messages");
 
-    const res = await mergeDuplicateMessages(onProgress);
+    const res = await mergeDuplicateMessages((done, total) => {
+      emit({ running: true, done, total });
+      onProgress?.(done, total);
+    });
     await db.kv.put({ key: MARK, value: await db.messages.count() });
+    emit({ running: false, done: 0, total: 0 });
 
     if (res.removed === 0) return null;
 
@@ -46,6 +83,7 @@ export async function autoRepair(
     return report;
   } catch {
     // A repair that fails must never stop her opening her case.
+    emit({ running: false, done: 0, total: 0 });
     return null;
   }
 }

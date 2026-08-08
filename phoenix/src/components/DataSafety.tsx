@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { db, findDuplicateMessages } from "../db";
-import { dismissRepairNotice, lastRepair, type RepairReport } from "../autoRepair";
+import { dismissRepairNotice, lastRepair, onRepairProgress, type RepairReport } from "../autoRepair";
 import {
   canPromptInstall,
   ensurePersistence,
@@ -80,7 +80,17 @@ export default function DataSafety({ compact = false }: { compact?: boolean }) {
 
   useEffect(() => {
     void refresh();
-    return watchInstallability(() => setInstallable(true));
+    const stopWatchingInstall = watchInstallability(() => setInstallable(true));
+    // The repair usually finishes AFTER this panel has already read its state,
+    // so without this she sits through an eighty-second cleanup and is told
+    // nothing about it until she happens to reload.
+    const stopWatchingRepair = onRepairProgress((p) => {
+      if (!p.running) void refresh();
+    });
+    return () => {
+      stopWatchingInstall();
+      stopWatchingRepair();
+    };
   }, [refresh]);
 
   const turnOnProtection = async () => {
