@@ -5,8 +5,9 @@ export interface Settings {
   pinHash: string | null;
   pinSalt: string | null;
   autoLock: boolean;
+  bioCredId: string | null;
   discreet: boolean;
-  theme: "light" | "dark";
+  theme: "light" | "dark" | "auto";
   connection: "server" | "direct";
   apiKey: string;
   model: string;
@@ -44,8 +45,9 @@ const DEFAULTS: Settings = {
   pinHash: null,
   pinSalt: null,
   autoLock: false,
+  bioCredId: null,
   discreet: false,
-  theme: "light",
+  theme: "auto",
   connection: "server",
   apiKey: "",
   model: "claude-opus-5",
@@ -75,11 +77,18 @@ const DISCREET_ICON =
 const REAL_ICON =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%94%A5%3C/text%3E%3C/svg%3E";
 
+export function resolveTheme(s: Settings): "light" | "dark" {
+  if (s.theme === "auto") {
+    return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+  return s.theme;
+}
+
 export function applyChrome(s: Settings): void {
   document.title = s.discreet ? DISCREET_TITLE : REAL_TITLE;
   const link = document.getElementById("favicon") as HTMLLinkElement | null;
   if (link) link.href = s.discreet ? DISCREET_ICON : REAL_ICON;
-  document.documentElement.dataset.theme = s.theme;
+  document.documentElement.dataset.theme = resolveTheme(s);
 }
 
 /** Immediately replace this tab with an innocuous page, leaving no back entry. */

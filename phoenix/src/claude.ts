@@ -46,11 +46,13 @@ const trunc = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "…" : 
 
 /** Compact plain-text snapshot of the case for AI context. */
 export async function buildCaseSnapshot(): Promise<string> {
-  const [incidents, messages, evidence, financials] = await Promise.all([
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const [incidents, messages, evidence, financials, upcomingDates] = await Promise.all([
     db.incidents.orderBy("date").reverse().limit(40).toArray(),
     db.messages.orderBy("date").reverse().limit(200).toArray(),
     db.evidence.orderBy("date").reverse().limit(40).toArray(),
     db.financials.toArray(),
+    db.dates.where("date").aboveOrEqual(todayStr).sortBy("date"),
   ]);
   const starred = messages.filter((m) => m.starred).slice(0, 50);
 
@@ -59,6 +61,17 @@ export async function buildCaseSnapshot(): Promise<string> {
   lines.push(
     `Totals: ${incidents.length} incidents (most recent shown), ${messages.length} messages on file (${starred.length} starred), ${evidence.length} evidence items, ${financials.length} financial entries.`
   );
+
+  if (upcomingDates.length) {
+    lines.push("\nUPCOMING KEY DATES:");
+    for (const d of upcomingDates.slice(0, 15)) {
+      lines.push(
+        `- ${d.date}${d.time ? " " + d.time : ""} | ${d.type} | ${d.title}${
+          d.location ? ` @ ${d.location}` : ""
+        }${d.notes ? ` | ${trunc(d.notes, 120)}` : ""}`
+      );
+    }
+  }
 
   if (incidents.length) {
     lines.push("\nINCIDENT LOG (newest first):");

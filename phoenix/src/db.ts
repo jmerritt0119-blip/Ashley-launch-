@@ -84,6 +84,26 @@ export interface ChatMsg {
   createdAt: number;
 }
 
+export const DATE_TYPES = [
+  "hearing",
+  "filing deadline",
+  "attorney meeting",
+  "custody exchange",
+  "appointment",
+  "other",
+] as const;
+
+export interface KeyDate {
+  id?: number;
+  date: string; // YYYY-MM-DD
+  time?: string;
+  title: string;
+  type: string;
+  location?: string;
+  notes?: string;
+  createdAt: number;
+}
+
 // Deliberately neutral database name — it is visible in browser dev tools.
 class PhoenixDB extends Dexie {
   incidents!: Table<Incident, number>;
@@ -91,6 +111,7 @@ class PhoenixDB extends Dexie {
   evidence!: Table<EvidenceItem, number>;
   financials!: Table<FinancialItem, number>;
   chat!: Table<ChatMsg, number>;
+  dates!: Table<KeyDate, number>;
 
   constructor() {
     super("phx_notes");
@@ -100,6 +121,9 @@ class PhoenixDB extends Dexie {
       evidence: "++id, date, kind, createdAt",
       financials: "++id, type, owner, createdAt",
       chat: "++id, createdAt",
+    });
+    this.version(2).stores({
+      dates: "++id, date, createdAt",
     });
   }
 }
@@ -113,12 +137,13 @@ export async function wipeAllData(): Promise<void> {
 }
 
 export async function exportAllData() {
-  const [incidents, messages, evidence, financials, chat] = await Promise.all([
+  const [incidents, messages, evidence, financials, chat, dates] = await Promise.all([
     db.incidents.toArray(),
     db.messages.toArray(),
     db.evidence.toArray(),
     db.financials.toArray(),
     db.chat.toArray(),
+    db.dates.toArray(),
   ]);
 
   const evidenceSerialized = await Promise.all(
@@ -141,6 +166,7 @@ export async function exportAllData() {
     evidence: evidenceSerialized,
     financials,
     chat,
+    dates,
   };
 }
 
@@ -154,13 +180,18 @@ export async function importAllData(data: any): Promise<void> {
     if (fileData) item.blob = base64ToBlob(fileData, e.fileType || "application/octet-stream");
     return item;
   });
-  await db.transaction("rw", [db.incidents, db.messages, db.evidence, db.financials, db.chat], async () => {
-    if (data.incidents?.length) await db.incidents.bulkAdd(stripIds(data.incidents));
-    if (data.messages?.length) await db.messages.bulkAdd(stripIds(data.messages));
-    if (evidence.length) await db.evidence.bulkAdd(stripIds(evidence));
-    if (data.financials?.length) await db.financials.bulkAdd(stripIds(data.financials));
-    if (data.chat?.length) await db.chat.bulkAdd(stripIds(data.chat));
-  });
+  await db.transaction(
+    "rw",
+    [db.incidents, db.messages, db.evidence, db.financials, db.chat, db.dates],
+    async () => {
+      if (data.incidents?.length) await db.incidents.bulkAdd(stripIds(data.incidents));
+      if (data.messages?.length) await db.messages.bulkAdd(stripIds(data.messages));
+      if (evidence.length) await db.evidence.bulkAdd(stripIds(evidence));
+      if (data.financials?.length) await db.financials.bulkAdd(stripIds(data.financials));
+      if (data.chat?.length) await db.chat.bulkAdd(stripIds(data.chat));
+      if (data.dates?.length) await db.dates.bulkAdd(stripIds(data.dates));
+    }
+  );
 }
 
 function stripIds<T extends { id?: number }>(rows: T[]): T[] {

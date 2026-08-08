@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { hashPin } from "../crypto";
 import { quickExit, type Settings } from "../settings";
+import { verifyBiometric } from "../webauthn";
 
 interface Props {
   settings: Settings;
@@ -10,6 +11,8 @@ interface Props {
 export default function PinGate({ settings, onUnlock }: Props) {
   const [pin, setPin] = useState("");
   const [error, setError] = useState(false);
+  const [bioBusy, setBioBusy] = useState(false);
+  const triedBio = useRef(false);
 
   const tryUnlock = async () => {
     if (!settings.pinHash || !settings.pinSalt) {
@@ -24,6 +27,23 @@ export default function PinGate({ settings, onUnlock }: Props) {
       setPin("");
     }
   };
+
+  const tryBio = async () => {
+    if (!settings.bioCredId || bioBusy) return;
+    setBioBusy(true);
+    const ok = await verifyBiometric(settings.bioCredId);
+    setBioBusy(false);
+    if (ok) onUnlock();
+  };
+
+  // Offer Face ID / Touch ID immediately when enabled.
+  useEffect(() => {
+    if (settings.bioCredId && !triedBio.current) {
+      triedBio.current = true;
+      void tryBio();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="gate">
@@ -51,10 +71,15 @@ export default function PinGate({ settings, onUnlock }: Props) {
             That PIN didn't match.
           </p>
         )}
-        <div style={{ display: "flex", gap: 8, marginTop: 14, justifyContent: "center" }}>
+        <div style={{ display: "flex", gap: 8, marginTop: 14, justifyContent: "center", flexWrap: "wrap" }}>
           <button className="btn" onClick={() => void tryUnlock()}>
             Unlock
           </button>
+          {settings.bioCredId && (
+            <button className="btn secondary" disabled={bioBusy} onClick={() => void tryBio()}>
+              {bioBusy ? "Checking…" : "Use Face ID / Touch ID"}
+            </button>
+          )}
           <button className="btn ghost" onClick={quickExit}>
             Exit to weather
           </button>

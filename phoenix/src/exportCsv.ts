@@ -101,6 +101,15 @@ export async function exportEvidenceCsv(): Promise<void> {
   downloadText(`evidence-index-${stamp()}.csv`, toCsv(rows));
 }
 
+export async function exportDatesCsv(): Promise<void> {
+  const dates = await db.dates.orderBy("date").toArray();
+  const rows: any[][] = [["Date", "Time", "Event", "Type", "Location", "Notes"]];
+  dates.forEach((d) => {
+    rows.push([d.date, d.time || "", d.title, d.type, d.location || "", d.notes || ""]);
+  });
+  downloadText(`key-dates-${stamp()}.csv`, toCsv(rows));
+}
+
 export async function exportFinancialsCsv(): Promise<void> {
   const financials = await db.financials.toArray();
   const rows: any[][] = [

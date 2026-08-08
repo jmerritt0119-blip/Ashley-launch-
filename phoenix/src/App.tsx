@@ -9,6 +9,8 @@ import Messages from "./components/Messages";
 import Evidence from "./components/Evidence";
 import Financials from "./components/Financials";
 import Timeline from "./components/Timeline";
+import Dates from "./components/Dates";
+import Scan from "./components/Scan";
 import Packet from "./components/Packet";
 import Advocate from "./components/Advocate";
 import Resources from "./components/Resources";
@@ -19,8 +21,10 @@ const VIEWS: { key: string; label: string }[] = [
   { key: "incidents", label: "Incidents" },
   { key: "custody", label: "Custody" },
   { key: "messages", label: "Messages" },
+  { key: "scan", label: "Deep scan" },
   { key: "evidence", label: "Evidence" },
   { key: "financials", label: "Financials" },
+  { key: "dates", label: "Dates" },
   { key: "timeline", label: "Timeline" },
   { key: "advocate", label: "Advocate" },
   { key: "packet", label: "Packet" },
@@ -46,6 +50,20 @@ export default function App() {
   useEffect(() => {
     applyChrome(settings);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Follow the device's light/dark preference live when theme is "auto".
+  useEffect(() => {
+    if (settings.theme !== "auto" || !window.matchMedia) return;
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => applyChrome(settings);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, [settings]);
+
+  const prepWithAdvocate = useCallback((prompt: string) => {
+    sessionStorage.setItem("phx_advocate_prefill", prompt);
+    setView("advocate");
   }, []);
 
   // Esc pressed twice within 800ms → leave immediately.
@@ -116,6 +134,8 @@ export default function App() {
         {view === "messages" && <Messages />}
         {view === "evidence" && <Evidence />}
         {view === "financials" && <Financials />}
+        {view === "dates" && <Dates prepWithAdvocate={prepWithAdvocate} />}
+        {view === "scan" && <Scan settings={settings} goSettings={() => setView("settings")} />}
         {view === "timeline" && <Timeline />}
         {view === "advocate" && <Advocate settings={settings} goSettings={() => setView("settings")} />}
         {view === "packet" && <Packet displayName={settings.displayName} />}

@@ -1,6 +1,7 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../db";
 import {
+  exportDatesCsv,
   exportEvidenceCsv,
   exportFinancialsCsv,
   exportIncidentsCsv,
@@ -57,6 +58,9 @@ export default function Packet({ displayName }: Props) {
             </button>
             <button className="btn secondary sm" onClick={() => void exportFinancialsCsv()}>
               ⬇ Financial summary (.csv)
+            </button>
+            <button className="btn secondary sm" onClick={() => void exportDatesCsv()}>
+              ⬇ Key dates (.csv)
             </button>
           </div>
           <p className="muted small" style={{ margin: 0 }}>

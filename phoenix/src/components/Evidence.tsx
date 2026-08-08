@@ -25,8 +25,27 @@ export default function Evidence() {
   const [notes, setNotes] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const bulkRef = useRef<HTMLInputElement>(null);
 
   const items = useLiveQuery(() => db.evidence.orderBy("date").reverse().toArray(), []);
+
+  const bulkAddScreenshots = async (files: File[]) => {
+    if (!files.length) return;
+    const now = Date.now();
+    await db.evidence.bulkAdd(
+      files.map((f) => ({
+        title: f.name.replace(/\.[a-z0-9]+$/i, ""),
+        date: today(),
+        kind: f.type.startsWith("image/") ? "screenshot" : "document",
+        notes: "",
+        tags: [],
+        fileName: f.name,
+        fileType: f.type,
+        blob: f,
+        createdAt: now,
+      }))
+    );
+  };
 
   const save = async () => {
     if (!title.trim() && !file) return;
@@ -108,9 +127,29 @@ export default function Evidence() {
             onChange={(e) => setNotes(e.target.value)}
           />
         </label>
-        <button className="btn" onClick={() => void save()}>
-          Save to vault
-        </button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="btn" onClick={() => void save()}>
+            Save to vault
+          </button>
+          <button className="btn secondary" onClick={() => bulkRef.current?.click()}>
+            + Add several photos at once
+          </button>
+          <input
+            ref={bulkRef}
+            type="file"
+            accept="image/*,application/pdf"
+            multiple
+            style={{ display: "none" }}
+            onChange={(e) => {
+              void bulkAddScreenshots(Array.from(e.target.files || []));
+              e.target.value = "";
+            }}
+          />
+        </div>
+        <p className="muted small" style={{ marginTop: 8 }}>
+          On iPhone the picker opens your Photos — select a whole batch of screenshots or injury
+          photos and they're filed in one go (dated today; edit dates as needed).
+        </p>
       </div>
 
       {(items || []).map((item) => (

@@ -8,14 +8,16 @@ interface Props {
 
 export default function Dashboard({ go, displayName }: Props) {
   const counts = useLiveQuery(async () => {
-    const [incidents, messages, starred, evidence, financials] = await Promise.all([
+    const today = new Date().toISOString().slice(0, 10);
+    const [incidents, messages, starred, evidence, financials, nextDates] = await Promise.all([
       db.incidents.count(),
       db.messages.count(),
       db.messages.filter((m) => m.starred).count(),
       db.evidence.count(),
       db.financials.count(),
+      db.dates.where("date").aboveOrEqual(today).sortBy("date"),
     ]);
-    return { incidents, messages, starred, evidence, financials };
+    return { incidents, messages, starred, evidence, financials, next: nextDates[0] ?? null };
   });
 
   const empty =
@@ -30,6 +32,14 @@ export default function Dashboard({ go, displayName }: Props) {
         Every entry you make here is a brick in the case. Small, steady, documented — that's how
         it's won.
       </p>
+
+      {counts?.next && (
+        <div className="notice" style={{ cursor: "pointer" }} onClick={() => go("dates")}>
+          <strong>Next key date:</strong> {counts.next.date}
+          {counts.next.time ? ` at ${counts.next.time}` : ""} — {counts.next.title} (
+          {counts.next.type}). Tap to review and prep.
+        </div>
+      )}
 
       <div className="stat-grid">
         <div className="stat" onClick={() => go("incidents")}>
@@ -90,6 +100,9 @@ export default function Dashboard({ go, displayName }: Props) {
           </button>
           <button className="btn secondary sm" onClick={() => go("messages")}>
             + Import messages
+          </button>
+          <button className="btn secondary sm" onClick={() => go("scan")}>
+            Deep-scan a report
           </button>
           <button className="btn secondary sm" onClick={() => go("packet")}>
             Build attorney packet

@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, MESSAGE_TAGS, type Msg } from "../db";
 import { messagesFromCsv, messagesFromText } from "../parseMessages";
+import { ocrImages } from "../ocr";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -14,7 +15,9 @@ export default function Messages() {
   const [search, setSearch] = useState("");
   const [tagFilter, setTagFilter] = useState("");
   const [starredOnly, setStarredOnly] = useState(false);
+  const [ocrStatus, setOcrStatus] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
+  const shotRef = useRef<HTMLInputElement>(null);
 
   const messages = useLiveQuery(() => db.messages.orderBy("date").reverse().toArray(), []);
 
@@ -61,6 +64,22 @@ export default function Messages() {
     setShowImport(false);
   };
 
+  const onScreenshots = async (files: File[]) => {
+    if (!files.length) return;
+    setShowImport(true);
+    try {
+      const text = await ocrImages(files, (i, n) => setOcrStatus(`Reading screenshot ${i} of ${n}…`));
+      setPasteText((t) => (t ? t + "\n\n" : "") + text);
+      setOcrStatus(
+        "Text extracted below — fix any misreads, set the defaults, then Preview. (Screenshots never leave this device.)"
+      );
+    } catch (e: any) {
+      setOcrStatus(
+        "Couldn't read the screenshots: " + (e?.message || "OCR failed") + " (OCR needs a network connection the first time it runs.)"
+      );
+    }
+  };
+
   const toggleStar = (m: Msg) => {
     if (m.id != null) void db.messages.update(m.id, { starred: !m.starred });
   };
@@ -88,6 +107,9 @@ export default function Messages() {
         <button className="btn secondary" onClick={() => fileRef.current?.click()}>
           Upload .csv or .txt export
         </button>
+        <button className="btn secondary" onClick={() => shotRef.current?.click()}>
+          From screenshots (OCR)
+        </button>
         <input
           ref={fileRef}
           type="file"
@@ -99,7 +121,49 @@ export default function Messages() {
             e.target.value = "";
           }}
         />
+        <input
+          ref={shotRef}
+          type="file"
+          accept="image/*"
+          multiple
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const files = Array.from(e.target.files || []);
+            void onScreenshots(files);
+            e.target.value = "";
+          }}
+        />
       </div>
+
+      <details className="panel" style={{ marginTop: 14 }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>
+           Getting texts off an iPhone (iMessage)
+        </summary>
+        <ul className="small" style={{ marginTop: 10 }}>
+          <li>
+            <strong>Screenshots (easiest):</strong> screenshot the thread — scroll so the contact
+            name and timestamps show — then tap <em>From screenshots (OCR)</em> above and select
+            them from your Photos. The text is extracted right on this device.
+          </li>
+          <li>
+            <strong>Live Text:</strong> in Photos, touch and hold the text inside a screenshot,
+            Select All → Copy, then paste into the box above.
+          </li>
+          <li>
+            <strong>On a Mac:</strong> if Messages syncs via iCloud, open the conversation in the
+            Messages app, select messages, copy, and paste here.
+          </li>
+          <li>
+            <strong>Full exports:</strong> tools like iMazing can export whole iMessage threads to
+            CSV from an iPhone backup — upload the CSV above and it parses with dates and senders.
+          </li>
+          <li className="muted">
+            Keep the original thread on the phone untouched — screenshots plus carrier records
+            (your attorney can subpoena them) are the proof; this app is your working index. If you
+            think the phone is monitored, do this from a safer device.
+          </li>
+        </ul>
+      </details>
 
       {showImport && (
         <div className="panel" style={{ marginTop: 14 }}>
@@ -119,6 +183,7 @@ export default function Messages() {
               <input type="date" value={defaultDate} onChange={(e) => setDefaultDate(e.target.value)} />
             </label>
           </div>
+          {ocrStatus && <div className="notice calm">{ocrStatus}</div>}
           <textarea
             style={{ minHeight: 140 }}
             placeholder="Paste the conversation here…"

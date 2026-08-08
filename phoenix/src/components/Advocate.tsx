@@ -21,6 +21,15 @@ export default function Advocate({ settings, goSettings }: Props) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chat?.length, live]);
 
+  // A page (e.g. Key dates) can hand off a prepared question.
+  useEffect(() => {
+    const prefill = sessionStorage.getItem("phx_advocate_prefill");
+    if (prefill) {
+      sessionStorage.removeItem("phx_advocate_prefill");
+      setInput(prefill);
+    }
+  }, []);
+
   const needsKey = settings.connection === "direct" && !settings.apiKey;
 
   const send = async (text: string) => {

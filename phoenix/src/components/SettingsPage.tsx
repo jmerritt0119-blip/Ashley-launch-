@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { exportAllData, importAllData, wipeAllData } from "../db";
 import { decryptJson, encryptJson, hashPin, randomSaltHex } from "../crypto";
 import { MODEL_OPTIONS, type Settings } from "../settings";
+import { biometricsSupported, enrollBiometric } from "../webauthn";
 
 interface Props {
   settings: Settings;
@@ -13,6 +14,21 @@ export default function SettingsPage({ settings, update }: Props) {
   const [pin2, setPin2] = useState("");
   const [passphrase, setPassphrase] = useState("");
   const [status, setStatus] = useState("");
+  const [bioAvailable, setBioAvailable] = useState(false);
+
+  useEffect(() => {
+    void biometricsSupported().then(setBioAvailable);
+  }, []);
+
+  const enableBio = async () => {
+    try {
+      const credId = await enrollBiometric();
+      update({ bioCredId: credId });
+      setStatus("Face ID / Touch ID unlock enabled.");
+    } catch {
+      setStatus("Couldn't set up Face ID / Touch ID — you can keep using the PIN.");
+    }
+  };
 
   const setPin = async () => {
     if (pin1.length < 4) return setStatus("PIN must be at least 4 digits.");
@@ -74,7 +90,11 @@ export default function SettingsPage({ settings, update }: Props) {
           </label>
           <label className="field">
             <span>Theme</span>
-            <select value={settings.theme} onChange={(e) => update({ theme: e.target.value as "light" | "dark" })}>
+            <select
+              value={settings.theme}
+              onChange={(e) => update({ theme: e.target.value as Settings["theme"] })}
+            >
+              <option value="auto">Match my device (auto)</option>
               <option value="light">Light</option>
               <option value="dark">Dark (dim — less visible at night)</option>
             </select>
@@ -118,11 +138,31 @@ export default function SettingsPage({ settings, update }: Props) {
             Save PIN
           </button>
           {settings.pinHash && (
-            <button className="btn ghost" onClick={() => update({ pinHash: null, pinSalt: null })}>
+            <button
+              className="btn ghost"
+              onClick={() => update({ pinHash: null, pinSalt: null, bioCredId: null })}
+            >
               Remove PIN
             </button>
           )}
         </div>
+        {settings.pinHash && bioAvailable && (
+          <div style={{ marginTop: 12 }}>
+            {settings.bioCredId ? (
+              <button className="btn ghost" onClick={() => update({ bioCredId: null })}>
+                Disable Face ID / Touch ID unlock
+              </button>
+            ) : (
+              <button className="btn secondary" onClick={() => void enableBio()}>
+                Enable Face ID / Touch ID unlock
+              </button>
+            )}
+            <p className="muted small" style={{ marginTop: 6 }}>
+              Uses your device's own Face ID / Touch ID (Apple's platform authenticator). The PIN
+              always keeps working as a fallback.
+            </p>
+          </div>
+        )}
         <p className="muted small" style={{ marginTop: 8 }}>
           The PIN deters casual snooping on a shared device. It is not full encryption — if the
           device itself may be monitored, use a safer device.
