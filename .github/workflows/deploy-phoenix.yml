@@ -67,6 +67,40 @@ jobs:
           echo "POST /api/advocate -> HTTP $acode"
           echo "--- first 300 bytes of AI endpoint reply ---"
           head -c 300 /tmp/api.out; echo
+
+          # Cloud vault round-trip: store ciphertext, read it back, delete it.
+          # This is what multi-device and attorney sharing depend on, so it is
+          # proven on every deploy rather than assumed.
+          CODE="ZZZZ-TEST-$(date +%N | cut -c1-4)-CHEK"
+          vput=$(curl -s -o /tmp/v.out -w '%{http_code}' -m 25 -X PUT \
+            -H 'content-type: application/json' \
+            --data '{"format":"phoenix-encrypted","ciphertext":"ZmFrZQ==","salt":"aa","iv":"bb"}' \
+            "$URL/api/vault?code=$CODE" || echo "000")
+          echo "PUT /api/vault -> HTTP $vput"
+          vget=$(curl -s -o /tmp/vg.out -w '%{http_code}' -m 25 "$URL/api/vault?code=$CODE" || echo "000")
+          echo "GET /api/vault -> HTTP $vget"
+          head -c 200 /tmp/vg.out; echo
+          curl -s -o /dev/null -m 25 -X DELETE "$URL/api/vault?code=$CODE" || true
+          if [ "$vput" != "200" ] || [ "$vget" != "200" ]; then
+            echo "::error::Cloud vault round-trip failed — multi-device sync would not work."
+            cat /tmp/v.out; echo
+            exit 1
+          fi
+          if ! grep -q "ZmFrZQ==" /tmp/vg.out; then
+            echo "::error::Vault returned data that does not match what was stored."
+            exit 1
+          fi
+          # Refuse-plaintext guard must hold.
+          pput=$(curl -s -o /dev/null -w '%{http_code}' -m 25 -X PUT \
+            -H 'content-type: application/json' \
+            --data '{"secret":"plaintext should be rejected"}' \
+            "$URL/api/vault?code=$CODE" || echo "000")
+          echo "PUT plaintext -> HTTP $pput (expect 400)"
+          if [ "$pput" != "400" ]; then
+            echo "::error::Vault accepted a non-encrypted payload."
+            exit 1
+          fi
+          echo "✓ Cloud vault stores, returns, and refuses plaintext"
           echo "✅ Deployed"
 
   deploy:
