@@ -3,6 +3,7 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { db, type EvidenceItem } from "../db";
 import { exportEvidenceFilesZip } from "../exportCsv";
 import { useDraft } from "../useDraft";
+import { recordImport, sha256Hex } from "../integrity";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const KINDS = ["photo", "screenshot", "document", "audio", "video", "other"];
@@ -56,8 +57,10 @@ export default function Evidence() {
   const bulkAddScreenshots = async (files: File[]) => {
     if (!files.length) return;
     const now = Date.now();
+    // Every file gets fingerprinted on the way in, however it arrives.
+    const hashes = await Promise.all(files.map((f) => sha256Hex(f)));
     await db.evidence.bulkAdd(
-      files.map((f) => ({
+      files.map((f, i) => ({
         title: f.name.replace(/\.[a-z0-9]+$/i, ""),
         date: today(),
         kind: kindForFile(f),
@@ -66,9 +69,19 @@ export default function Evidence() {
         fileName: f.name,
         fileType: f.type,
         blob: f,
+        sha256: hashes[i],
+        fileSize: f.size,
         createdAt: now,
       }))
     );
+    for (let i = 0; i < files.length; i++) {
+      await recordImport({
+        kind: "evidence file",
+        fileName: files[i].name,
+        bytes: files[i].size,
+        sha256: hashes[i],
+      });
+    }
   };
 
   const downloadAll = async () => {
@@ -89,6 +102,9 @@ export default function Evidence() {
 
   const save = async () => {
     if (!title.trim() && !file) return;
+    // Fingerprint the file as it enters the record, so months from now she can
+    // show the copy she produces is the copy she saved.
+    const sha256 = file ? await sha256Hex(file) : undefined;
     await db.evidence.add({
       title: title.trim() || file?.name || "(untitled)",
       date,
@@ -98,8 +114,19 @@ export default function Evidence() {
       fileName: file?.name,
       fileType: file?.type,
       blob: file ?? undefined,
+      sha256,
+      fileSize: file?.size,
       createdAt: Date.now(),
     });
+    if (file && sha256) {
+      await recordImport({
+        kind: "evidence file",
+        fileName: file.name,
+        bytes: file.size,
+        sha256,
+        note: title.trim() || undefined,
+      });
+    }
     setTitle("");
     setNotes("");
     setFile(null);

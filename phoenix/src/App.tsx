@@ -7,6 +7,7 @@ import Dashboard from "./components/Dashboard";
 import Incidents from "./components/Incidents";
 import Custody from "./components/Custody";
 import Violations from "./components/Violations";
+import ProtectiveOrder from "./components/ProtectiveOrder";
 import Messages from "./components/Messages";
 import Journal from "./components/Journal";
 import Evidence from "./components/Evidence";
@@ -29,6 +30,7 @@ const VIEWS: { key: string; label: string }[] = [
   { key: "incidents", label: "Incidents" },
   { key: "custody", label: "Custody" },
   { key: "violations", label: "Violations" },
+  { key: "protective", label: "Protective order" },
   { key: "messages", label: "Messages" },
   { key: "journal", label: "Journal" },
   { key: "evidence", label: "Evidence" },
@@ -190,7 +192,7 @@ export default function App() {
 
       <main className="main">
         <Pane on={view} me="dashboard" mounted={mounted}>
-          <Dashboard go={go} displayName={settings.displayName} />
+          <Dashboard go={go} displayName={settings.displayName} settings={settings} />
         </Pane>
         <Pane on={view} me="incidents" mounted={mounted}>
           <Incidents />
@@ -200,6 +202,9 @@ export default function App() {
         </Pane>
         <Pane on={view} me="violations" mounted={mounted}>
           <Violations go={go} />
+        </Pane>
+        <Pane on={view} me="protective" mounted={mounted}>
+          <ProtectiveOrder settings={settings} go={go} />
         </Pane>
         <Pane on={view} me="messages" mounted={mounted}>
           <Messages />

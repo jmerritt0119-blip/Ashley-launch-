@@ -14,6 +14,7 @@ import {
 import { ocrImages } from "../ocr";
 import { messagesFromCsv, type ParsedMessage } from "../parseMessages";
 import type { Settings } from "../settings";
+import { recordImport, sha256Hex } from "../integrity";
 
 /**
  * A CSV export is imported by code, not by the AI: every row lands in the
@@ -99,6 +100,11 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     const rows = detectCsvMessages(doc);
     if (!rows.length) return 0;
     const now = Date.now();
+    // Fingerprint the export itself, so the archive can be tied back to the
+    // exact file it came from if he ever claims these texts were invented.
+    void sha256Hex(doc).then((sha256) =>
+      recordImport({ kind: "message export", rows: rows.length, bytes: doc.length, sha256 })
+    );
     await db.messages.bulkAdd(
       rows.map((m) => ({
         date: m.date,

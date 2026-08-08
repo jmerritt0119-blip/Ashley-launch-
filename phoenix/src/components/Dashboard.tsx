@@ -4,15 +4,18 @@ import { db } from "../db";
 import { QUICK_ACTIONS } from "../claude";
 import { handoff } from "../handoff";
 import DataSafety from "./DataSafety";
+import NextSteps from "./NextSteps";
+import type { Settings } from "../settings";
 
 interface Props {
   go: (view: string) => void;
   displayName: string;
+  settings: Settings;
 }
 
 const HERO_CHIPS = ["Protect my daughter", "Prep for a custody hearing", "What am I missing?"];
 
-export default function Dashboard({ go, displayName }: Props) {
+export default function Dashboard({ go, displayName, settings }: Props) {
   const [ask, setAsk] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -219,6 +222,8 @@ export default function Dashboard({ go, displayName }: Props) {
           In immediate danger? Call 911. Any time, any hour: 1-800-799-7233 or text START to 88788.
         </p>
       </div>
+
+      <NextSteps go={go} settings={settings} />
 
       <DataSafety compact />
     </div>

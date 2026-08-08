@@ -63,6 +63,9 @@ export interface EvidenceItem {
   fileName?: string;
   fileType?: string;
   blob?: Blob;
+  /** Fingerprint taken when the file entered the record. See integrity.ts. */
+  sha256?: string;
+  fileSize?: number;
   createdAt: number;
 }
 
@@ -171,6 +174,22 @@ export interface JournalEntry {
   updatedAt: number;
 }
 
+/**
+ * A note that something entered the case, and what it hashed to at the time.
+ * The record is append-only by design — it is worth nothing if it can be
+ * quietly rewritten later.
+ */
+export interface ImportRecord {
+  id?: number;
+  kind: string;
+  fileName?: string;
+  bytes?: number;
+  rows?: number;
+  sha256: string;
+  note?: string;
+  createdAt: number;
+}
+
 /** A rolling on-device restore point. See safety.ts. */
 export interface Snapshot {
   id?: number;
@@ -192,6 +211,7 @@ class PhoenixDB extends Dexie {
   documents!: Table<Doc, number>;
   violations!: Table<Violation, number>;
   journal!: Table<JournalEntry, number>;
+  imports!: Table<ImportRecord, number>;
   snapshots!: Table<Snapshot, number>;
   kv!: Table<KvRow, string>;
 
@@ -221,6 +241,9 @@ class PhoenixDB extends Dexie {
     this.version(6).stores({
       journal: "++id, date, createdAt",
     });
+    this.version(7).stores({
+      imports: "++id, createdAt, sha256",
+    });
   }
 }
 
@@ -237,7 +260,7 @@ export async function wipeAllData(): Promise<void> {
  *   their bytes are left out — keeps the cloud vault small enough to sync.
  */
 export async function exportAllData(includeFiles = true) {
-  const [incidents, messages, evidence, financials, chat, dates, documents, violations, journal, kv] =
+  const [incidents, messages, evidence, financials, chat, dates, documents, violations, journal, imports, kv] =
     await Promise.all([
       db.incidents.toArray(),
       db.messages.toArray(),
@@ -248,6 +271,7 @@ export async function exportAllData(includeFiles = true) {
       db.documents.toArray(),
       db.violations.toArray(),
       db.journal.toArray(),
+      db.imports.toArray(),
       db.kv.toArray(),
     ]);
 
@@ -275,6 +299,7 @@ export async function exportAllData(includeFiles = true) {
     documents,
     violations,
     journal,
+    imports,
     kv,
   };
 }
@@ -301,6 +326,7 @@ export async function importAllData(data: any): Promise<void> {
       db.documents,
       db.violations,
       db.journal,
+      db.imports,
       db.kv,
     ],
     async () => {
@@ -347,6 +373,7 @@ export async function importAllData(data: any): Promise<void> {
       await addNew(db.journal, data.journal || [], (j: any) =>
         `${j.date}|${j.time || ""}|${(j.body || "").slice(0, 300)}`
       );
+      await addNew(db.imports, data.imports || [], (r: any) => `${r.sha256}|${r.createdAt}`);
       if (data.kv?.length) await db.kv.bulkPut(data.kv);
     }
   );

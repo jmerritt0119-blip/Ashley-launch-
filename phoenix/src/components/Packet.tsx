@@ -8,6 +8,8 @@ import {
   exportEvidenceFilesZip,
   exportEverythingZip,
   exportJournalCsv,
+  exportIntegrityCsv,
+  backfillFingerprints,
   exportFinancialsCsv,
   exportIncidentsCsv,
   exportMessagesCsv,
@@ -39,6 +41,21 @@ export default function Packet({ displayName }: Props) {
       setAllDone("Couldn't build the file: " + (e?.message || "unknown error") + ". Nothing was lost — try again.");
     } finally {
       setAllStatus(null);
+    }
+  };
+
+  const [fpStatus, setFpStatus] = useState<string | null>(null);
+  const runBackfill = async () => {
+    setFpStatus("Fingerprinting…");
+    try {
+      const n = await backfillFingerprints((d, t) => setFpStatus(`Fingerprinting ${d + 1} of ${t}…`));
+      setFpStatus(
+        n === 0
+          ? "Every stored file already carries a fingerprint."
+          : `Fingerprinted ${n} file${n === 1 ? "" : "s"} that were saved before this existed. The report marks these honestly — the fingerprint is of the file as held today, not as first imported.`
+      );
+    } catch (e: any) {
+      setFpStatus("Couldn't fingerprint: " + (e?.message || "unknown error"));
     }
   };
 
@@ -132,6 +149,30 @@ export default function Packet({ displayName }: Props) {
               ⬇ Journal (.csv)
             </button>
           </div>
+          <hr className="hr" />
+          <h2>Proving nothing was altered</h2>
+          <p className="muted small">
+            The most predictable attack on a record like yours is not "he didn't say that" — it's
+            "she made it up" or "she edited it." Every file and every message export is
+            fingerprinted the moment it enters this app, with a SHA-256 hash and a timestamp. If it
+            is ever questioned, the copy you produce either matches the fingerprint taken back then
+            or it doesn't. Give this file to your attorney alongside the evidence.
+          </p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button className="btn secondary" onClick={() => void exportIntegrityCsv()}>
+              ⬇ Evidence integrity record (.csv)
+            </button>
+            <button className="btn secondary" onClick={() => void runBackfill()}>
+              Fingerprint older files
+            </button>
+          </div>
+          {fpStatus && <div className="notice calm" style={{ marginTop: 10 }}>{fpStatus}</div>}
+          <p className="muted small" style={{ marginTop: 8 }}>
+            This shows the file hasn't changed since you saved it. It doesn't prove who wrote a
+            message — that comes from the phone itself and from carrier records your attorney can
+            subpoena. Keep those originals.
+          </p>
+
           <hr className="hr" />
           <h2>Evidence files (photos, videos, recordings)</h2>
           <p className="muted small">

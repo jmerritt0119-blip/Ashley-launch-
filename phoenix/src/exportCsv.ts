@@ -359,6 +359,25 @@ export async function exportEverythingZip(
   }
   csv("records/EXHIBIT-INDEX.csv", manifest);
 
+  // The integrity record travels with the evidence — it is worth little if it
+  // arrives separately, or not at all.
+  const importRecords = await db.imports.orderBy("createdAt").toArray();
+  csv("records/EVIDENCE-INTEGRITY.csv", [
+    ["Recorded on", "What", "File name", "Rows", "Size (bytes)", "SHA-256 fingerprint", "Note"],
+    ...importRecords.map((r) => [
+      new Date(r.createdAt).toISOString(), r.kind, r.fileName || "", r.rows ?? "",
+      r.bytes ?? "", r.sha256, r.note || "",
+    ]),
+    [],
+    ["Exhibit #", "Title", "File name", "Size (bytes)", "SHA-256 fingerprint", "Status"],
+    ...numbered.map(({ item, ref }) => [
+      ref, item.title, item.fileName || "", item.fileSize ?? "", item.sha256 || "",
+      item.blob
+        ? item.sha256 ? "fingerprinted on import" : "added before fingerprinting existed"
+        : "indexed only, original held elsewhere",
+    ]),
+  ]);
+
   const files = numbered.filter((n) => n.item.blob).length;
   text(
     "README.txt",
@@ -368,6 +387,7 @@ export async function exportEverythingZip(
       "WHAT IS IN HERE",
       `  records/            every record as a spreadsheet (opens in Excel, Numbers, Google Sheets)`,
       `  records/EXHIBIT-INDEX.csv   what each numbered file is`,
+      `  records/EVIDENCE-INTEGRITY.csv   when each file entered the record, and its SHA-256`,
       `  journal/            journal entries as readable text`,
       `  documents/          written documents`,
       `  files/              photos, screenshots, video and audio, numbered E-001, E-002, …`,
@@ -390,6 +410,14 @@ export async function exportEverythingZip(
       "",
       "  Journal entries marked 'written at the time' were recorded",
       "  contemporaneously, which is why they carry weight.",
+      "",
+      "ON THE INTEGRITY RECORD",
+      "  Every file and message export was fingerprinted (SHA-256) the moment it",
+      "  entered the app, with a timestamp. If anyone claims a message was altered",
+      "  or invented, the copy produced either matches the fingerprint recorded",
+      "  then or it does not. This shows the file has not changed since it was",
+      "  saved; it does not prove authorship — that comes from the device itself",
+      "  and from carrier records, which can be subpoenaed.",
     ].join("\n")
   );
 
@@ -401,4 +429,69 @@ export async function exportEverythingZip(
   a.click();
   URL.revokeObjectURL(url);
   return { files: entries.length, bytes: zip.size };
+}
+
+/**
+ * The integrity record: what entered the case, when, and what it hashed to.
+ * This is what answers "she could have made these up" — the fingerprint was
+ * taken on import, long before anyone disputed anything.
+ */
+export async function exportIntegrityCsv(): Promise<void> {
+  const [imports, evidence] = await Promise.all([
+    db.imports.orderBy("createdAt").toArray(),
+    db.evidence.orderBy("date").toArray(),
+  ]);
+  const rows: any[][] = [
+    ["Recorded on", "What", "File name", "Rows", "Size (bytes)", "SHA-256 fingerprint", "Note"],
+  ];
+  for (const r of imports) {
+    rows.push([
+      new Date(r.createdAt).toISOString(),
+      r.kind,
+      r.fileName || "",
+      r.rows ?? "",
+      r.bytes ?? "",
+      r.sha256,
+      r.note || "",
+    ]);
+  }
+  // Exhibit-by-exhibit, matching the numbering used everywhere else.
+  rows.push([]);
+  rows.push(["Exhibit #", "Title", "Date", "File name", "Size (bytes)", "SHA-256 fingerprint", "Status"]);
+  evidence.forEach((e, i) => {
+    rows.push([
+      `E-${String(i + 1).padStart(3, "0")}`,
+      e.title,
+      e.date,
+      e.fileName || "",
+      e.fileSize ?? "",
+      e.sha256 || "",
+      e.blob
+        ? e.sha256
+          ? "fingerprinted on import"
+          : "added before fingerprinting existed — fingerprint it from the Packet page"
+        : "indexed only, original held elsewhere",
+    ]);
+  });
+  downloadText(`evidence-integrity-${stamp()}.csv`, "﻿" + toCsv(rows));
+}
+
+/**
+ * Fingerprint any stored file that predates this feature. The hash is of the
+ * bytes as they are held now — which is honest, and the report says so rather
+ * than implying a fingerprint that was never taken at import.
+ */
+export async function backfillFingerprints(
+  onProgress?: (done: number, total: number) => void
+): Promise<number> {
+  const { sha256Hex } = await import("./integrity");
+  const pending = (await db.evidence.toArray()).filter((e) => e.blob && !e.sha256);
+  for (let i = 0; i < pending.length; i++) {
+    onProgress?.(i, pending.length);
+    const e = pending[i];
+    if (e.id == null || !e.blob) continue;
+    const sha256 = await sha256Hex(e.blob);
+    await db.evidence.update(e.id, { sha256, fileSize: e.blob.size });
+  }
+  return pending.length;
 }
