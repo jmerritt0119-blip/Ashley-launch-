@@ -62,7 +62,7 @@ export default function Advocate({ settings, goSettings }: Props) {
         ...(chat || []).map((c) => ({ role: c.role, content: c.content })),
         { role: "user" as const, content },
       ];
-      const caseContext = settings.shareContext ? await buildCaseSnapshot(settings.county) : null;
+      const caseContext = settings.shareContext ? await buildCaseSnapshot(settings.county, settings.hisNames) : null;
       let acc = "";
       const full = await streamAdvocate({
         connection: settings.connection,

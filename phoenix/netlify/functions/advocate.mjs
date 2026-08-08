@@ -75,7 +75,18 @@ export default async (req) => {
 
       const runOnce = (withFallbacks, convo) =>
         new Promise((resolve, reject) => {
-          const params = { model, max_tokens: 8000, system, messages: convo, tools: TOOLS };
+          // Adaptive thinking at high effort: this is a woman's custody case,
+          // not a chatbot — depth of reasoning matters more than latency.
+          // Deep Scan (webSearch:false) runs leaner since it only emits JSON.
+          const params = {
+            model,
+            max_tokens: 16000,
+            system,
+            messages: convo,
+            thinking: { type: 'adaptive' },
+            output_config: { effort: TOOLS ? 'xhigh' : 'high' },
+            ...(TOOLS ? { tools: TOOLS } : {}),
+          };
           let run;
           if (withFallbacks) {
             // Retry safety-classifier declines on Anthropic's recommended

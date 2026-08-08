@@ -34,14 +34,26 @@ async function readError(res: Response, fallback: string): Promise<string> {
   }
 }
 
-/** Encrypt everything on-device and upload the ciphertext. */
+/**
+ * Encrypt everything on-device and upload the ciphertext.
+ *
+ * When a recovery key is supplied we also store a tiny second envelope holding
+ * the passphrase, encrypted under that recovery key. It is the second door:
+ * forgetting the passphrase costs her the vault otherwise, and for someone in
+ * her situation that is not an acceptable way to lose a case. The server still
+ * holds nothing but ciphertext — both doors need a key she owns.
+ */
 export async function pushVault(
   code: string,
   passphrase: string,
-  includeFiles: boolean
+  includeFiles: boolean,
+  recoveryKey?: string
 ): Promise<number> {
   const data = await exportAllData(includeFiles);
-  const envelope = await encryptJson(data, passphrase);
+  const envelope: any = await encryptJson(data, passphrase);
+  if (recoveryKey) {
+    envelope.escrow = await encryptJson({ passphrase }, recoveryKey);
+  }
   const res = await fetch(`/api/vault?code=${encodeURIComponent(code)}`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
@@ -65,6 +77,29 @@ export async function pullVault(code: string, passphrase: string): Promise<numbe
   }
   await importAllData(data);
   return (envelope.savedAt as number) || Date.now();
+}
+
+/**
+ * The second door: recover the forgotten passphrase using the recovery key
+ * from her Recovery Kit. Returns the passphrase so she can get back in and
+ * then set a new one she'll remember.
+ */
+export async function recoverPassphrase(code: string, recoveryKey: string): Promise<string> {
+  const res = await fetch(`/api/vault?code=${encodeURIComponent(code)}`, { method: "GET" });
+  if (!res.ok) throw new Error(await readError(res, "Couldn't reach the vault. Check the code."));
+  const envelope = await res.json();
+  if (!envelope?.escrow) {
+    throw new Error(
+      "This vault was saved without a Recovery Kit, so the passphrase can't be recovered. If you still know it, use it — then save again to create a kit."
+    );
+  }
+  try {
+    const opened = await decryptJson(envelope.escrow, recoveryKey.trim().toLowerCase());
+    if (!opened?.passphrase) throw new Error("bad escrow");
+    return opened.passphrase as string;
+  } catch {
+    throw new Error("That recovery key doesn't match this vault. Check it against your Recovery Kit.");
+  }
 }
 
 /** Has anything been saved under this code? Used to warn before overwriting. */

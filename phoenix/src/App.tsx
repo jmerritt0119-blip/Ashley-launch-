@@ -154,7 +154,9 @@ export default function App() {
         {view === "evidence" && <Evidence />}
         {view === "financials" && <Financials />}
         {view === "dates" && <Dates prepWithAdvocate={prepWithAdvocate} />}
-        {view === "scan" && <Scan settings={settings} goSettings={() => setView("settings")} />}
+        {view === "scan" && (
+          <Scan settings={settings} goSettings={() => setView("settings")} update={update} />
+        )}
         {view === "timeline" && <Timeline />}
         {view === "advocate" && <Advocate settings={settings} goSettings={() => setView("settings")} />}
         {view === "documents" && <Documents />}

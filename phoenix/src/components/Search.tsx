@@ -125,7 +125,7 @@ export default function Search({ go, settings }: Props) {
       const evidenceText = forAi
         .map((h) => `[${h.kind}] ${h.date || "no date"} — ${h.title}: ${h.body.slice(0, 500)}`)
         .join("\n");
-      const caseContext = settings.shareContext ? await buildCaseSnapshot(settings.county) : null;
+      const caseContext = settings.shareContext ? await buildCaseSnapshot(settings.county, settings.hisNames) : null;
       let acc = "";
       await streamAdvocate({
         connection: settings.connection,

@@ -26,6 +26,24 @@ async function deriveKey(passphrase: string, salt: Uint8Array): Promise<CryptoKe
   );
 }
 
+/**
+ * A high-entropy recovery key — the second door into the vault, so a forgotten
+ * passphrase is never the end of her case. Words instead of characters because
+ * she may have to read it over the phone or copy it off paper under stress.
+ */
+const RECOVERY_WORDS =
+  "anchor amber arbor beacon birch bramble canyon cedar cinder clover copper cove crane delta dune ember falcon fern flint forge garnet granite harbor haven heron indigo ivory juniper kestrel lantern larch linen lumen marble meadow mesa mica noble onyx opal orchard pebble pewter pine quarry quill raven ridge river saffron sage slate sparrow spruce stone summit tamarack thistle timber topaz umber valley vellum verdant walnut willow winter zephyr".split(
+    " "
+  );
+
+export function makeRecoveryKey(): string {
+  // 12 words from this list is ~72 bits of entropy. Fewer words would be
+  // friendlier to type and materially weaker if the ciphertext ever leaked,
+  // and her case is not the place to trade security for typing comfort.
+  const idx = crypto.getRandomValues(new Uint32Array(12));
+  return Array.from(idx, (n) => RECOVERY_WORDS[n % RECOVERY_WORDS.length]).join("-");
+}
+
 export interface EncryptedBackup {
   format: "phoenix-encrypted";
   v: 1;
