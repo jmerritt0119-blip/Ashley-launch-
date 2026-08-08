@@ -1,0 +1,154 @@
+name: Deploy Phoenix
+
+# Builds phoenix/ on GitHub's servers and deploys it to Netlify (site:
+# phoenix-case-builder), configuring the runtime API key from repo secrets.
+# Same proven pattern as the old JARVIS deploy workflow. Required secrets:
+#   NETLIFY_AUTH_TOKEN  – Netlify personal access token
+#   ANTHROPIC_API_KEY   – Anthropic API key (so The Advocate can answer)
+#
+# NOTE: the stored NETLIFY_AUTH_TOKEN is currently rejected by Netlify
+# ("Unauthorized" — run 31268182775). Manual-trigger only until a fresh
+# token is saved: Netlify → User settings → Applications → New access
+# token, then GitHub → Settings → Secrets and variables → Actions →
+# update NETLIFY_AUTH_TOKEN, then run this workflow from the Actions tab.
+# (Primary hosting meanwhile is Vercel: the app is served at /phoenix
+# with pages/api/advocate.js as its AI endpoint.)
+
+on:
+  workflow_dispatch:
+    inputs:
+      netlify_proxy_path:
+        description: >
+          Short-lived Netlify MCP proxy deploy URL (optional). When set, the
+          workflow uploads the phoenix/ source to Netlify's build system
+          through it — no NETLIFY_AUTH_TOKEN needed.
+        required: false
+        default: ""
+
+concurrency:
+  group: deploy-phoenix
+  cancel-in-progress: true
+
+jobs:
+  # Tokenless path: deploy through a Netlify MCP proxy URL minted by the
+  # Netlify connector. The URL is short-lived and site-scoped.
+  deploy-via-proxy:
+    if: ${{ inputs.netlify_proxy_path != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Upload source to Netlify build system
+        working-directory: phoenix
+        run: |
+          npx -y @netlify/mcp@latest \
+            --site-id dab61dfe-7a9c-4d49-88f5-fafaf58aa12c \
+            --proxy-path "${{ inputs.netlify_proxy_path }}"
+
+      - name: Verify the live site responds
+        run: |
+          URL="https://phoenix-case-builder.netlify.app"
+          code=$(curl -s -o /tmp/page.html -w '%{http_code}' -m 25 "$URL/" || echo "000")
+          echo "GET $URL/ -> HTTP $code"
+          head -c 300 /tmp/page.html; echo
+          if ! grep -qi "Phoenix" /tmp/page.html; then
+            echo "::error::Site is not serving Phoenix yet."
+            exit 1
+          fi
+          echo "✓ Phoenix markup present"
+          acode=$(curl -s -o /tmp/api.out -w '%{http_code}' -m 45 -X POST \
+            -H 'content-type: application/json' \
+            --data '{"messages":[{"role":"user","content":"Say OK briefly."}]}' \
+            "$URL/api/advocate" || echo "000")
+          echo "POST /api/advocate -> HTTP $acode"
+          echo "--- first 300 bytes of AI endpoint reply ---"
+          head -c 300 /tmp/api.out; echo
+          echo "✅ Deployed"
+
+  deploy:
+    if: ${{ inputs.netlify_proxy_path == '' }}
+    runs-on: ubuntu-latest
+    env:
+      NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+      SITE_NAME: phoenix-case-builder
+      SITE_ID: dab61dfe-7a9c-4d49-88f5-fafaf58aa12c
+      ACCOUNT_SLUG: jmerritt0119
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Check required secret
+        run: |
+          if [ -z "$NETLIFY_AUTH_TOKEN" ]; then
+            echo "::error::NETLIFY_AUTH_TOKEN secret is not set. Add it under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+
+      - name: Install Netlify CLI
+        run: npm install -g netlify-cli@26
+
+      - name: Resolve Netlify site
+        run: |
+          set -e
+          FOUND=$(netlify api listSites | jq -r --arg id "$SITE_ID" '[.[] | select(.id==$id)][0].id // empty')
+          if [ -z "$FOUND" ]; then
+            netlify sites:create --name "$SITE_NAME" --account-slug "$ACCOUNT_SLUG" 2>/dev/null \
+              || echo "site create skipped (already exists, or name taken)"
+            FOUND=$(netlify api listSites | jq -r --arg n "$SITE_NAME" '[.[] | select(.name==$n)][0].id // empty')
+          fi
+          if [ -z "$FOUND" ]; then
+            echo "::error::Could not find or create the Netlify site."
+            exit 1
+          fi
+          echo "NETLIFY_SITE_ID=$FOUND" >> "$GITHUB_ENV"
+          echo "Using Netlify site id: $FOUND"
+
+      - name: Configure runtime API key on the site
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -n "$ANTHROPIC_API_KEY" ]; then
+            netlify env:set ANTHROPIC_API_KEY "$ANTHROPIC_API_KEY" --site "$NETLIFY_SITE_ID" --force >/dev/null
+            echo "ANTHROPIC_API_KEY configured on the site."
+          else
+            echo "::warning::ANTHROPIC_API_KEY secret not set — the app loads but The Advocate's server mode won't answer until you add it."
+          fi
+
+      - name: Install app dependencies
+        working-directory: phoenix
+        run: npm ci || npm install
+
+      - name: Build and deploy to production
+        working-directory: phoenix
+        run: |
+          set -o pipefail
+          netlify link --id "$NETLIFY_SITE_ID" || true
+          netlify deploy --build --prod --site "$NETLIFY_SITE_ID" | tee /tmp/deploy.out
+          echo "================ LIVE URL ================"
+          grep -Eo 'https://[a-zA-Z0-9.-]+\.netlify\.app' /tmp/deploy.out | tail -1 || true
+
+      - name: Verify the live site responds
+        run: |
+          URL="https://$SITE_NAME.netlify.app"
+          code=$(curl -s -o /tmp/page.html -w '%{http_code}' -m 25 "$URL/" || echo "000")
+          echo "GET $URL/ -> HTTP $code"
+          head -c 300 /tmp/page.html; echo
+          if ! grep -qi "Phoenix" /tmp/page.html; then
+            echo "::error::Site is not serving Phoenix yet."
+            exit 1
+          fi
+          echo "✓ Phoenix markup present"
+          acode=$(curl -s -o /tmp/api.out -w '%{http_code}' -m 30 -X POST \
+            -H 'content-type: application/json' \
+            --data '{"messages":[{"role":"user","content":"Say OK briefly."}]}' \
+            "$URL/api/advocate" || echo "000")
+          echo "POST /api/advocate -> HTTP $acode"
+          head -c 200 /tmp/api.out; echo
+          echo "✅ Deployed"
