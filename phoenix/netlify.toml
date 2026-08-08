@@ -8,11 +8,15 @@
 # site's environment variables (the same key already used for /api/chat works).
 
 [build]
-  command = "npm run build"
+  command = "npm run build:site"
   publish = "dist"
 
 [build.environment]
   NODE_VERSION = "20"
+  # The site previously hosted a different app; force dev-dependency install
+  # even if a NODE_ENV=production var lingers in the site environment.
+  NODE_ENV = "development"
+  NPM_FLAGS = "--include=dev"
 
 [functions]
   directory = "netlify/functions"
