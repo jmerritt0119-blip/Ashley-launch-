@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../db";
+import { usePaneActive } from "../paneContext";
 import {
   exportDatesCsv,
   exportEvidenceCsv,
@@ -34,7 +35,10 @@ export default function Packet({ displayName }: Props) {
     }
   };
 
+  const active = usePaneActive();
+  // Suspended while this view is off screen — it reads the whole archive.
   const data = useLiveQuery(async () => {
+    if (!active) return undefined;
     const [incidents, starred, evidence, financials, violations] = await Promise.all([
       db.incidents.orderBy("date").toArray(),
       db.messages.filter((m) => m.starred).toArray(),
@@ -44,7 +48,7 @@ export default function Packet({ displayName }: Props) {
     ]);
     starred.sort((a, b) => (a.date < b.date ? -1 : 1));
     return { incidents, starred, evidence, financials, violations };
-  }, []);
+  }, [active]);
 
   const fmt = (n: number) => "$" + n.toLocaleString(undefined, { maximumFractionDigits: 0 });
   const total = (t: string) =>

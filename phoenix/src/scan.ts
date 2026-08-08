@@ -19,9 +19,30 @@ export interface ScanMessage {
   tags: string[];
 }
 
+export interface RiskIndicator {
+  type: string;
+  quote: string;
+  date: string;
+  why: string;
+}
+
+/**
+ * Something in the record that helps her case without being abuse: money he
+ * said he didn't have, parenting time he refused, a statement that will
+ * contradict what he tells the court, a witness who saw it.
+ */
+export interface CaseFact {
+  type: string;
+  quote: string;
+  date: string;
+  whyItMatters: string;
+}
+
 export interface ScanResult {
   incidents: ScanIncident[];
   messages: ScanMessage[];
+  risks: RiskIndicator[];
+  facts: CaseFact[];
   summary: string;
 }
 
@@ -84,14 +105,151 @@ Respond with ONLY valid JSON — no markdown fences, no commentary before or aft
       "tags": ["one or more from the tag list"]
     }
   ],
-  "summary": "2-4 sentences naming the patterns found and roughly how often they appear"
+  "riskIndicators": [
+    {
+      "type": "one of: threat to kill, strangulation or choking, weapon access or reference, threat to take or harm the child, stalking or surveillance, threat of suicide as leverage, sexual coercion, escalation after separation, extreme jealousy or possessiveness, threat to have her deported or reported, threat to expose intimate images",
+      "quote": "the exact words from the document, verbatim",
+      "date": "YYYY-MM-DD or \\"\\"",
+      "why": "one sentence on why this matters for her safety"
+    }
+  ],
+  "caseFacts": [
+    {
+      "type": "one of: income or employment, hidden money or asset, large purchase or spending, debt, property, business or side income, parenting capacity, missed or refused parenting time, substance use, new partner around the child, admission or contradiction, witness, medical or police or CPS reference, timeline anchor, threat to prolong litigation, access to her accounts or devices",
+      "quote": "the exact words, verbatim",
+      "date": "YYYY-MM-DD or \\"\\"",
+      "whyItMatters": "one sentence on how her attorney could use this"
+    }
+  ],
+  "summary": "3-6 sentences naming the patterns found, roughly how often they appear, and how they change over time"
 }
 
 Allowed categories: ${JSON.stringify(INCIDENT_CATEGORIES)}
 Allowed tags: ${JSON.stringify(MESSAGE_TAGS)}
 
+WHAT COUNTS AS ABUSE — hunt for all of it, not just the obvious
+Most of what proves a case like hers is NOT physical. Courts and custody
+evaluators respond to documented patterns of psychological and coercive abuse,
+and those are the easiest things to miss when skimming. Look for every one of:
+
+VERBAL — name-calling, insults, degradation, profanity aimed at her, screaming
+in writing (ALL CAPS tirades), mocking, contempt, sexual or body-based
+humiliation, calling her crazy/stupid/worthless/a bad mother, swearing at her
+in front of the child.
+
+PSYCHOLOGICAL AND EMOTIONAL — gaslighting (denying things she witnessed,
+insisting she is misremembering or imagining, "that never happened," "you're
+insane"); blame-shifting and DARVO (he offends, then denies, attacks her, and
+casts himself as the real victim); manufactured guilt; silent treatment and
+withdrawal as punishment; conditional affection; humiliation in front of others;
+telling her no one will believe her; telling her she is a bad mother or will
+lose the child; degrading her family; love-bombing and apology cycles that
+follow incidents; threats of self-harm or suicide used to control her.
+
+COERCIVE CONTROL — rules and conditions on her behavior; monitoring her phone,
+location, messages, spending, mileage, or social media; demanding passwords;
+interrogating her about where she was; controlling money, transport, food,
+sleep, clothing, medication or medical care; sabotaging her work, sleep or
+schooling; isolating her from family, friends or support; punishing her for
+contact with others; controlling access to documents, keys or the car.
+
+INTIMIDATION AND THREATS — threats of violence, veiled threats ("you'll be
+sorry", "remember what happened last time", "don't make me"), threats to take
+the child, threats to leave her with nothing, threats to report her to CPS,
+police, immigration or her employer, threats to expose private or intimate
+images, threats about lawyers and courts, punching walls, breaking things,
+harming or threatening pets, displaying or referencing weapons.
+
+FINANCIAL — withholding money, controlling all accounts, hiding or moving
+assets, running up debt in her name, refusing support, sabotaging her job,
+demanding receipts, making her ask for basics.
+
+CHILD-RELATED — anything involving the child: using her as messenger or spy,
+disparaging her mother to her, threatening custody, undermining school,
+medical or therapy, exposing her to violence, substance use during possession,
+missed or manipulated exchanges, refusing to return her.
+
+DIGITAL AND STALKING — tracking apps, spyware, GPS, fake or burner accounts,
+messaging through third parties or new numbers after being blocked, showing up
+uninvited, excessive calls or texts in bursts, monitoring through the child.
+
+SEXUAL — coercion, pressure, unwanted contact, reproductive control, sexual
+degradation, threats tied to sex.
+
+ADMISSIONS AND CORROBORATION — anything where he admits, minimizes,
+apologizes for, or explains away his own conduct ("I shouldn't have grabbed
+you", "I only did it because you..."). These are gold: in Texas his own
+statements come in against him as party-opponent statements, not hearsay.
+
+BEYOND ABUSE — the rest of the case
+A divorce and custody case is won on more than the abuse. Ordinary messages
+routinely contain facts her attorney would pay to find, and she will never
+spot them herself in thousands of texts. Capture these as caseFacts:
+
+MONEY (Texas is a community property state; the division must be "just and
+right", and support is set from his real resources)
+- Any statement of what he earns, hours worked, a raise, bonus, commission,
+  tips, overtime, or being paid in cash or "under the table".
+- Side work, a business, contract jobs, rental income, crypto, gambling wins.
+- Accounts, cards, loans, or property she may not know about; money moved,
+  withdrawn, or "loaned" to family; anything hidden before or during filing.
+- Large or unusual spending — vehicles, trips, jewelry, gifts to a new partner
+  (spending community money on an affair can move the property division).
+- Claims of poverty that contradict his spending. Flag both sides of that.
+- Debts run up, especially in her name.
+
+PARENTING (Texas best-interest factors — this is what custody turns on)
+- Who actually does the caregiving: school runs, doctors, homework, bedtime,
+  sick days, activities. Statements showing he doesn't know her doctor,
+  teacher, allergies, schedule or routine.
+- Times he refused, cancelled, shortened, or handed off his parenting time,
+  or asked her to take the child on his days.
+- Work travel or hours that conflict with the possession schedule he wants.
+- Who else is around the child, and anything about that person.
+- Substance use — drinking or drugs generally, and specifically before or
+  during his time with the child, or driving with her.
+
+IMPEACHMENT — the most valuable category
+- Anything he says now that will contradict what he is likely to claim in
+  court later. Example: "I can't take her Wednesdays, I work late" is
+  devastating if he later asks for a 50/50 schedule. Capture the quote and
+  say what position it would contradict.
+- Admissions about his own conduct, his income, his availability, his
+  drinking, or events he will later deny.
+
+CORROBORATION LEADS — where the proof lives
+- Names of anyone who saw or heard something (a friend, a neighbor, a
+  doorman, a relative, a coworker) — these become witnesses.
+- Any reference to police, a report number, an officer, CPS, a hospital, an
+  urgent care, a therapist, a school counselor, or a pediatrician. Each one
+  is a record her attorney can subpoena that does not depend on her word.
+- Photos, videos, or recordings either of them mentions existing.
+
+TIMELINE ANCHORS — dates that decide legal questions
+- When she moved out, when he did, separation date, when the relationship
+  ended, when he learned about the filing, when a job started or ended.
+
+LITIGATION CONDUCT
+- Threats to drag out the case, bankrupt her on legal fees, take the child
+  through the courts, or hide money from the divorce. In Texas this can
+  support attorney's fees and speaks to his character as a conservator.
+
+TECH AND ACCESS
+- Anything showing he has, or has used, her passwords, accounts, email,
+  location, or devices — this supports both a protective order and the
+  argument that her evidence must be protected from him.
+
 Rules:
-- Catalog: physical violence, threats and intimidation, coercive control, verbal/emotional abuse, financial abuse, stalking or monitoring, isolation, property damage, anything endangering or involving children, order violations, admissions of wrongdoing, and apology-after-abuse cycles.
+- Catalog every category above. Verbal and psychological abuse count as
+  incidents in their own right — do not skip a message because it "only" says
+  something cruel. A single degrading text is an entry.
+- Treat repetition as significant: if the same tactic appears many times, log
+  the clearest examples AND say in the summary how often it recurs and whether
+  it escalates over time or around events (court dates, her leaving, exchanges).
+- riskIndicators is a SAFETY list, separate from evidence. Strangulation or
+  choking, threats to kill, weapon access, threats toward the child, and
+  escalation after separation are the strongest predictors of serious harm —
+  surface them even if she has not framed them as important.
 - Extract only what is actually in the document. Quotes verbatim. No inference beyond what is written, no exaggeration — a conservative catalog survives cross-examination.
 - "incidents" are events; "flaggedMessages" are individual significant quotes/messages. An event described by a quote can appear in both.
 - Severity: 1 minor … 5 extreme/dangerous. Be conservative.
@@ -167,7 +325,26 @@ export function parseScanResult(raw: string): ScanResult {
     }))
     .filter((m: ScanMessage) => m.text);
 
-  return { incidents, messages, summary: String(obj.summary || "").slice(0, 2000) };
+  const risks: RiskIndicator[] = (Array.isArray(obj.riskIndicators) ? obj.riskIndicators : [])
+    .map((r: any) => ({
+      type: String(r?.type || "").slice(0, 120),
+      quote: String(r?.quote || "").slice(0, 1000),
+      date: r?.date ? normalizeDate(String(r.date)) : "",
+      why: String(r?.why || "").slice(0, 400),
+    }))
+    .filter((r: RiskIndicator) => r.type || r.quote);
+
+  // Defaults to empty so a reply from an older prompt still parses cleanly.
+  const facts: CaseFact[] = (Array.isArray(obj.caseFacts) ? obj.caseFacts : [])
+    .map((f: any) => ({
+      type: String(f?.type || "").slice(0, 120),
+      quote: String(f?.quote || "").slice(0, 1000),
+      date: f?.date ? normalizeDate(String(f.date)) : "",
+      whyItMatters: String(f?.whyItMatters || "").slice(0, 500),
+    }))
+    .filter((f: CaseFact) => f.quote || f.type);
+
+  return { incidents, messages, risks, facts, summary: String(obj.summary || "").slice(0, 4000) };
 }
 
 const dateSort = <T extends { date: string }>(a: T, b: T) => {
@@ -181,8 +358,12 @@ const dateSort = <T extends { date: string }>(a: T, b: T) => {
 export function mergeScanResults(parts: ScanResult[]): ScanResult {
   const incidents: ScanIncident[] = [];
   const messages: ScanMessage[] = [];
+  const risks: RiskIndicator[] = [];
+  const facts: CaseFact[] = [];
   const seenInc = new Set<string>();
   const seenMsg = new Set<string>();
+  const seenRisk = new Set<string>();
+  const seenFact = new Set<string>();
   const summaries: string[] = [];
   for (const p of parts) {
     for (const i of p.incidents) {
@@ -197,9 +378,23 @@ export function mergeScanResults(parts: ScanResult[]): ScanResult {
       seenMsg.add(k);
       messages.push(m);
     }
+    for (const r of p.risks || []) {
+      const k = `${r.type.toLowerCase()}|${r.quote.toLowerCase().slice(0, 100)}`;
+      if (seenRisk.has(k)) continue;
+      seenRisk.add(k);
+      risks.push(r);
+    }
+    for (const f of p.facts || []) {
+      const k = `${f.type.toLowerCase()}|${f.quote.toLowerCase().slice(0, 100)}`;
+      if (seenFact.has(k)) continue;
+      seenFact.add(k);
+      facts.push(f);
+    }
     if (p.summary.trim()) summaries.push(p.summary.trim());
   }
   incidents.sort(dateSort);
   messages.sort(dateSort);
-  return { incidents, messages, summary: summaries.join("\n\n").slice(0, 8000) };
+  risks.sort(dateSort);
+  facts.sort(dateSort);
+  return { incidents, messages, risks, facts, summary: summaries.join("\n\n").slice(0, 8000) };
 }

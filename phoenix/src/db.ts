@@ -149,6 +149,16 @@ export interface KvRow {
   value: any;
 }
 
+/** A rolling on-device restore point. See safety.ts. */
+export interface Snapshot {
+  id?: number;
+  createdAt: number;
+  reason: string;
+  counts: Record<string, number>;
+  bytes: number;
+  json: string;
+}
+
 // Deliberately neutral database name — it is visible in browser dev tools.
 class PhoenixDB extends Dexie {
   incidents!: Table<Incident, number>;
@@ -159,6 +169,7 @@ class PhoenixDB extends Dexie {
   dates!: Table<KeyDate, number>;
   documents!: Table<Doc, number>;
   violations!: Table<Violation, number>;
+  snapshots!: Table<Snapshot, number>;
   kv!: Table<KvRow, string>;
 
   constructor() {
@@ -179,6 +190,10 @@ class PhoenixDB extends Dexie {
     });
     this.version(4).stores({
       violations: "++id, date, type, createdAt",
+    });
+    // Purely additive: every earlier table keeps its data untouched.
+    this.version(5).stores({
+      snapshots: "++id, createdAt",
     });
   }
 }

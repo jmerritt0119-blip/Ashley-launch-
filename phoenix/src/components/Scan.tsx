@@ -37,9 +37,11 @@ interface Props {
   settings: Settings;
   goSettings: () => void;
   update: (patch: Partial<Settings>) => void;
+  /** True while this view is the one on screen — it stays mounted when it isn't. */
+  active?: boolean;
 }
 
-export default function Scan({ settings, goSettings, update }: Props) {
+export default function Scan({ settings, goSettings, update, active = true }: Props) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
@@ -62,6 +64,31 @@ export default function Scan({ settings, goSettings, update }: Props) {
 
   const needsKey = settings.connection === "direct" && !settings.apiKey;
   const estParts = Math.max(1, Math.ceil(text.trim().length / SCAN_CHUNK_SIZE));
+
+  /**
+   * The facts list is the part an attorney can act on immediately, so it gets
+   * written out as a document rather than living only in this view.
+   */
+  const saveFactsAsDoc = async () => {
+    if (!result?.facts?.length) return;
+    const now = Date.now();
+    const body = result.facts
+      .map(
+        (f) =>
+          `${f.date || "(date not stated)"} — ${f.type}\n  "${f.quote}"\n  Why it matters: ${f.whyItMatters}`
+      )
+      .join("\n\n");
+    await db.documents.add({
+      title: `Case-building facts from the scan (${new Date().toISOString().slice(0, 10)})`,
+      content:
+        "Facts found in the message record that support the case beyond the abuse itself — " +
+        "money, parenting, and statements likely to contradict his position in court.\n\n" +
+        body,
+      createdAt: now,
+      updatedAt: now,
+    });
+    setAdded("Saved the case-building facts to Documents.");
+  };
 
   /**
    * Save every message in a CSV export to the archive immediately, by code.
@@ -158,6 +185,7 @@ export default function Scan({ settings, goSettings, update }: Props) {
   // files stay out of the textarea (rendering millions of characters would
   // lag a phone); the scan itself runs from memory either way.
   useEffect(() => {
+    if (!active) return;
     const t = handoff.scanText;
     if (t && t.trim()) {
       handoff.scanText = null;
@@ -171,7 +199,7 @@ export default function Scan({ settings, goSettings, update }: Props) {
       void run(false, t);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [active]);
 
   const run = async (resume = false, docOverride?: string) => {
     if (busy || needsKey) return;
@@ -488,6 +516,76 @@ export default function Scan({ settings, goSettings, update }: Props) {
 
       {result && (
         <>
+          {result.risks.length > 0 && (
+            <div className="panel" style={{ borderColor: "var(--danger)", borderWidth: 2 }}>
+              <h2 style={{ color: "var(--danger)" }}>
+                Read this first — {result.risks.length} safety warning
+                {result.risks.length === 1 ? "" : "s"} in these messages
+              </h2>
+              <p className="small">
+                These are the things that predict serious harm. They matter for your safety right
+                now, and they are also the strongest possible support for a Texas protective order.
+                Show these to your attorney, and to the court.
+              </p>
+              {result.risks.map((r, i) => (
+                <div className="item-card sev-5" key={i}>
+                  <div className="head">
+                    {r.date && <span className="date">{r.date}</span>}
+                    <span className="title">{r.type}</span>
+                  </div>
+                  {r.quote && (
+                    <p style={{ whiteSpace: "pre-wrap", margin: "6px 0", fontWeight: 600 }}>
+                      "{r.quote}"
+                    </p>
+                  )}
+                  {r.why && <p className="small muted" style={{ margin: 0 }}>{r.why}</p>}
+                </div>
+              ))}
+              <p className="small" style={{ fontWeight: 700, marginBottom: 0 }}>
+                If you are in danger right now: 911. Any hour: 1-800-799-7233, or text START to
+                88788. In Texas: Texas Advocacy Project 1-800-374-HOPE.
+              </p>
+            </div>
+          )}
+
+          {result.facts && result.facts.length > 0 && (
+            <div className="panel">
+              <h2>
+                {result.facts.length} case-building fact{result.facts.length === 1 ? "" : "s"} beyond
+                the abuse
+              </h2>
+              <p className="small">
+                Money, parenting, and his own words. Divorces are won on more than the worst nights:
+                what he earns and spends, the time with your daughter he skipped, and above all the
+                statements that will contradict what he tells the court. Save this list — send it to
+                your attorney as it stands, and take the ones about money into Financials.
+              </p>
+              {result.facts.map((f, i) => (
+                <div className="item-card" key={i}>
+                  <div className="head">
+                    {f.date && <span className="date">{f.date}</span>}
+                    <span className="title">{f.type}</span>
+                  </div>
+                  {f.quote && (
+                    <p style={{ whiteSpace: "pre-wrap", margin: "6px 0" }}>"{f.quote}"</p>
+                  )}
+                  {f.whyItMatters && (
+                    <p className="small muted" style={{ margin: 0 }}>
+                      {f.whyItMatters}
+                    </p>
+                  )}
+                </div>
+              ))}
+              <button
+                className="btn secondary"
+                onClick={() => void saveFactsAsDoc()}
+                style={{ marginTop: 10 }}
+              >
+                Save this list to Documents
+              </button>
+            </div>
+          )}
+
           <div className="panel">
             <h2>What the scan found</h2>
             {result.summary && <p style={{ whiteSpace: "pre-wrap" }}>{result.summary}</p>}

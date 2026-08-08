@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, INCIDENT_CATEGORIES, type Incident } from "../db";
+import { useDraft } from "../useDraft";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -19,7 +20,7 @@ const BLANK: Omit<Incident, "id" | "createdAt"> = {
 };
 
 export default function Incidents() {
-  const [draft, setDraft] = useState({ ...BLANK });
+  const [draft, setDraft] = useDraft("incidents.draft", { ...BLANK });
   const [editingId, setEditingId] = useState<number | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [filter, setFilter] = useState<string>("");

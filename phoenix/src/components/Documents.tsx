@@ -1,14 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, type Doc } from "../db";
 import { downloadText } from "../exportCsv";
+import { useDraft } from "../useDraft";
 
 export default function Documents() {
   const docs = useLiveQuery(() => db.documents.orderBy("updatedAt").reverse().toArray(), []);
   const [openId, setOpenId] = useState<number | null>(null);
-  const [title, setTitle] = useState("");
-  const [content, setContent] = useState("");
+  const [title, setTitle] = useDraft("documents.title", "");
+  const [content, setContent] = useDraft("documents.content", "");
   const [saved, setSaved] = useState(false);
+  const creatingRef = useRef(false);
 
   const open = (d: Doc) => {
     setOpenId(d.id ?? null);
@@ -28,17 +30,28 @@ export default function Documents() {
     const now = Date.now();
     const t = title.trim() || "Untitled document";
     if (openId === -1) {
-      const id = (await db.documents.add({ title: t, content, createdAt: now, updatedAt: now })) as number;
-      setOpenId(id);
+      // Only one row may ever be created for one new document, however fast
+      // she types while the first write is still in flight.
+      if (creatingRef.current) return;
+      creatingRef.current = true;
+      try {
+        const id = (await db.documents.add({ title: t, content, createdAt: now, updatedAt: now })) as number;
+        setOpenId(id);
+      } finally {
+        creatingRef.current = false;
+      }
     } else if (openId != null) {
       await db.documents.update(openId, { title: t, content, updatedAt: now });
     }
     setSaved(true);
   };
 
-  // Autosave a moment after typing stops.
+  // Autosave a moment after typing stops — including a brand-new document,
+  // which used to exist only in memory until she remembered to press Save.
+  // The first keystroke creates the row; everything after updates it.
   useEffect(() => {
-    if (openId == null || openId === -1) return;
+    if (openId == null) return;
+    if (openId === -1 && !title.trim() && !content.trim()) return;
     const timer = setTimeout(() => void save(), 800);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -3,16 +3,19 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../db";
 import { buildCaseSnapshot, streamAdvocate, QUICK_ACTIONS, type AdvocateTurn } from "../claude";
 import { handoff } from "../handoff";
+import { useDraft } from "../useDraft";
 import type { Settings } from "../settings";
 
 interface Props {
   settings: Settings;
   goSettings: () => void;
+  /** True while this view is the one on screen — it stays mounted when it isn't. */
+  active?: boolean;
 }
 
-export default function Advocate({ settings, goSettings }: Props) {
+export default function Advocate({ settings, goSettings, active = true }: Props) {
   const chat = useLiveQuery(() => db.chat.orderBy("createdAt").toArray(), []);
-  const [input, setInput] = useState("");
+  const [input, setInput] = useDraft("advocate.input", "");
   const [busy, setBusy] = useState(false);
   const [live, setLive] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -22,24 +25,29 @@ export default function Advocate({ settings, goSettings }: Props) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chat?.length, live]);
 
-  // A page (e.g. Key dates) can hand off a prepared question.
+  // A page (e.g. Key dates) can hand off a prepared question. This view stays
+  // mounted between visits, so the handoff is collected every time it is
+  // opened rather than only the first time.
   useEffect(() => {
+    if (!active) return;
     const prefill = sessionStorage.getItem("phx_advocate_prefill");
     if (prefill) {
       sessionStorage.removeItem("phx_advocate_prefill");
       setInput(prefill);
     }
-  }, []);
+    if (handoff.ask) {
+      const q = handoff.ask;
+      handoff.ask = null;
+      setPendingAsk(q);
+    }
+  }, [active]);
 
   const needsKey = settings.connection === "direct" && !settings.apiKey;
 
   // The home screen's Ask box hands the question here — send it the moment
-  // the conversation has loaded, no extra tap.
-  const [pendingAsk, setPendingAsk] = useState<string | null>(() => {
-    const q = handoff.ask;
-    handoff.ask = null;
-    return q;
-  });
+  // the conversation has loaded, no extra tap. Collected by the activation
+  // effect above.
+  const [pendingAsk, setPendingAsk] = useState<string | null>(null);
   useEffect(() => {
     if (pendingAsk && chat !== undefined && !busy && !needsKey) {
       const q = pendingAsk;

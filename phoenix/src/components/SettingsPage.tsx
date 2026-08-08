@@ -6,6 +6,7 @@ import { MODEL_OPTIONS, type Settings } from "../settings";
 import { biometricsSupported, enrollBiometric } from "../webauthn";
 import { makeVaultCode, normalizeVaultCode, pullVault, pushVault, recoverPassphrase } from "../sync";
 import { makeRecoveryKey } from "../crypto";
+import DataSafety from "./DataSafety";
 
 interface Props {
   settings: Settings;
@@ -475,6 +476,8 @@ Created ${new Date().toLocaleString()}
 
         {vaultMsg && <div className="notice calm">{vaultMsg}</div>}
       </div>
+
+      <DataSafety />
 
       <div className="panel">
         <h2>Backup & restore</h2>
