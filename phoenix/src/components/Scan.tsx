@@ -37,9 +37,11 @@ interface Props {
   settings: Settings;
   goSettings: () => void;
   update: (patch: Partial<Settings>) => void;
+  /** True while this view is the one on screen — it stays mounted when it isn't. */
+  active?: boolean;
 }
 
-export default function Scan({ settings, goSettings, update }: Props) {
+export default function Scan({ settings, goSettings, update, active = true }: Props) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
@@ -68,6 +70,31 @@ export default function Scan({ settings, goSettings, update }: Props) {
    * This happens before the AI runs, so the record is complete and permanent
    * even if the scan is interrupted or the model misses something.
    */
+  /**
+   * The facts list is the part an attorney can act on immediately, so it gets
+   * written out as a document rather than living only in this view.
+   */
+  const saveFactsAsDoc = async () => {
+    if (!result?.facts?.length) return;
+    const now = Date.now();
+    const body = result.facts
+      .map(
+        (f) =>
+          `${f.date || "(date not stated)"} — ${f.type}\n  "${f.quote}"\n  Why it matters: ${f.whyItMatters}`
+      )
+      .join("\n\n");
+    await db.documents.add({
+      title: `Case-building facts from the scan (${new Date().toISOString().slice(0, 10)})`,
+      content:
+        "Facts found in the message record that support the case beyond the abuse itself — " +
+        "money, parenting, and statements likely to contradict his position in court.\n\n" +
+        body,
+      createdAt: now,
+      updatedAt: now,
+    });
+    setAdded("Saved the case-building facts to Documents.");
+  };
+
   const archiveCsv = async (doc: string): Promise<number> => {
     const rows = detectCsvMessages(doc);
     if (!rows.length) return 0;
@@ -158,6 +185,7 @@ export default function Scan({ settings, goSettings, update }: Props) {
   // files stay out of the textarea (rendering millions of characters would
   // lag a phone); the scan itself runs from memory either way.
   useEffect(() => {
+    if (!active) return;
     const t = handoff.scanText;
     if (t && t.trim()) {
       handoff.scanText = null;
@@ -171,7 +199,7 @@ export default function Scan({ settings, goSettings, update }: Props) {
       void run(false, t);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [active]);
 
   const run = async (resume = false, docOverride?: string) => {
     if (busy || needsKey) return;
@@ -517,6 +545,44 @@ export default function Scan({ settings, goSettings, update }: Props) {
                 If you are in danger right now: 911. Any hour: 1-800-799-7233, or text START to
                 88788. In Texas: Texas Advocacy Project 1-800-374-HOPE.
               </p>
+            </div>
+          )}
+
+          {result.facts && result.facts.length > 0 && (
+            <div className="panel">
+              <h2>
+                {result.facts.length} case-building fact{result.facts.length === 1 ? "" : "s"} beyond
+                the abuse
+              </h2>
+              <p className="small">
+                Money, parenting, and his own words. Divorces are won on more than the worst nights:
+                what he earns and spends, the time with your daughter he skipped, and above all the
+                statements that will contradict what he tells the court. Save this list — send it to
+                your attorney as it stands, and take the ones about money into Financials.
+              </p>
+              {result.facts.map((f, i) => (
+                <div className="item-card" key={i}>
+                  <div className="head">
+                    {f.date && <span className="date">{f.date}</span>}
+                    <span className="title">{f.type}</span>
+                  </div>
+                  {f.quote && (
+                    <p style={{ whiteSpace: "pre-wrap", margin: "6px 0" }}>"{f.quote}"</p>
+                  )}
+                  {f.whyItMatters && (
+                    <p className="small muted" style={{ margin: 0 }}>
+                      {f.whyItMatters}
+                    </p>
+                  )}
+                </div>
+              ))}
+              <button
+                className="btn secondary"
+                onClick={() => void saveFactsAsDoc()}
+                style={{ marginTop: 10 }}
+              >
+                Save this list to Documents
+              </button>
             </div>
           )}
 

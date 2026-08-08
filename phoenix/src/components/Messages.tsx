@@ -1,34 +1,72 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, MESSAGE_TAGS, type Msg } from "../db";
 import { messagesFromCsv, messagesFromText } from "../parseMessages";
 import { ocrImages } from "../ocr";
+import { useDraft } from "../useDraft";
+import { usePaneActive } from "../paneContext";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
+/** How many rows are drawn at once. The archive can hold tens of thousands. */
+const PAGE = 400;
+
 export default function Messages() {
+  const active = usePaneActive();
   const [showImport, setShowImport] = useState(false);
-  const [pasteText, setPasteText] = useState("");
-  const [defaultSender, setDefaultSender] = useState("Him");
+  const [pasteText, setPasteText] = useDraft("messages.paste", "");
+  const [defaultSender, setDefaultSender] = useDraft("messages.sender", "Him");
   const [defaultDate, setDefaultDate] = useState(today());
   const [preview, setPreview] = useState<{ date: string; sender: string; text: string }[] | null>(null);
   const [search, setSearch] = useState("");
+  const [query, setQuery] = useState("");
   const [tagFilter, setTagFilter] = useState("");
   const [starredOnly, setStarredOnly] = useState(false);
   const [ocrStatus, setOcrStatus] = useState("");
+  /**
+   * Edits she has made that the database has confirmed, held here so a chip
+   * flips the instant she taps it. Re-reading a 27,000-row archive takes a
+   * moment, and during that moment the old value would otherwise still be on
+   * screen — which reads as "it didn't save".
+   */
+  const [edits, setEdits] = useState<Record<number, Partial<Msg>>>({});
+  const [savedId, setSavedId] = useState<number | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const shotRef = useRef<HTMLInputElement>(null);
+  const savedTimer = useRef<number | undefined>(undefined);
 
-  const messages = useLiveQuery(() => db.messages.orderBy("date").reverse().toArray(), []);
+  // Typing shouldn't re-scan the whole archive on every keystroke.
+  useEffect(() => {
+    const t = window.setTimeout(() => setQuery(search.trim().toLowerCase()), 200);
+    return () => window.clearTimeout(t);
+  }, [search]);
 
-  const visible = (messages || []).filter((m) => {
-    if (starredOnly && !m.starred) return false;
-    if (tagFilter && !m.tags.includes(tagFilter)) return false;
-    if (search) {
-      const q = search.toLowerCase();
-      if (!m.text.toLowerCase().includes(q) && !m.sender.toLowerCase().includes(q)) return false;
+  /**
+   * Filtering happens inside the database cursor and stops at one page, so a
+   * tag click costs a page of rows rather than the entire archive.
+   */
+  const page = useLiveQuery(async () => {
+    if (!active) return undefined;
+    let coll = db.messages.orderBy("date").reverse();
+    if (starredOnly || tagFilter || query) {
+      coll = coll.filter((m) => {
+        if (starredOnly && !m.starred) return false;
+        if (tagFilter && !(m.tags || []).includes(tagFilter)) return false;
+        if (query && !m.text.toLowerCase().includes(query) && !m.sender.toLowerCase().includes(query))
+          return false;
+        return true;
+      });
     }
-    return true;
+    // One extra row tells us whether there are more without counting them all.
+    return coll.limit(PAGE + 1).toArray();
+  }, [query, tagFilter, starredOnly, active]);
+
+  const total = useLiveQuery(() => db.messages.count(), [], 0);
+  const more = (page?.length || 0) > PAGE;
+  const visible = (page || []).slice(0, PAGE).map((m) => {
+    const patch = m.id != null ? edits[m.id] : undefined;
+    return patch ? { ...m, ...patch } : m;
   });
 
   const buildPreview = () => {
@@ -80,14 +118,44 @@ export default function Messages() {
     }
   };
 
-  const toggleStar = (m: Msg) => {
-    if (m.id != null) void db.messages.update(m.id, { starred: !m.starred });
+  /**
+   * Write one field and prove it landed. The change shows immediately, the
+   * database is asked to confirm it, and if the write fails for any reason the
+   * chip goes back to where it was and she is told — silence is not an option
+   * when the record is the case.
+   */
+  const persist = async (m: Msg, patch: Partial<Msg>) => {
+    if (m.id == null) return;
+    const id = m.id;
+    const before: Partial<Msg> = {};
+    for (const k of Object.keys(patch) as (keyof Msg)[]) (before as any)[k] = m[k];
+
+    setEdits((e) => ({ ...e, [id]: { ...e[id], ...patch } }));
+    setSaveError(null);
+    try {
+      const changed = await db.messages.update(id, patch);
+      if (changed === 0) throw new Error("that message is no longer in the archive");
+      // Read it back. A save she can't verify is a save she can't rely on.
+      const row = await db.messages.get(id);
+      if (!row) throw new Error("could not read the message back after saving");
+      setEdits((e) => ({ ...e, [id]: { ...e[id], tags: row.tags || [], starred: !!row.starred } }));
+      setSavedId(id);
+      window.clearTimeout(savedTimer.current);
+      savedTimer.current = window.setTimeout(() => setSavedId(null), 1400);
+    } catch (err: any) {
+      setEdits((e) => ({ ...e, [id]: { ...e[id], ...before } }));
+      setSaveError(
+        `That change did not save — ${err?.message || "the browser refused the write"}. Nothing was lost; try again, and if it keeps failing make a backup from Settings before doing anything else.`
+      );
+    }
   };
 
+  const toggleStar = (m: Msg) => void persist(m, { starred: !m.starred });
+
   const toggleTag = (m: Msg, tag: string) => {
-    if (m.id == null) return;
-    const tags = m.tags.includes(tag) ? m.tags.filter((t) => t !== tag) : [...m.tags, tag];
-    void db.messages.update(m.id, { tags });
+    const current = m.tags || [];
+    const tags = current.includes(tag) ? current.filter((t) => t !== tag) : [...current, tag];
+    void persist(m, { tags });
   };
 
   return (
@@ -234,10 +302,24 @@ export default function Messages() {
         <button className={`chip ${starredOnly ? "on" : ""}`} onClick={() => setStarredOnly(!starredOnly)}>
           ★ starred only
         </button>
-        <span className="muted small">{visible.length} shown</span>
+        <span className="muted small">
+          {page === undefined
+            ? "loading…"
+            : more
+              ? `first ${PAGE} of ${total.toLocaleString()} — narrow the search to see the rest`
+              : `${visible.length.toLocaleString()} shown of ${total.toLocaleString()}`}
+        </span>
       </div>
 
-      {visible.slice(0, 400).map((m) => (
+      {saveError && <div className="notice warn">{saveError}</div>}
+      {tagFilter && (
+        <p className="muted small" style={{ marginTop: -4 }}>
+          Filtered to “{tagFilter}”. Removing that tag from a message saves it and then drops it out
+          of this filtered view — it is not deleted.
+        </p>
+      )}
+
+      {visible.map((m) => (
         <div className="item-card" key={m.id}>
           <div className="head">
             <button className="star-btn" title="Star as significant" onClick={() => toggleStar(m)}>
@@ -245,13 +327,18 @@ export default function Messages() {
             </button>
             <span className="date">{m.date}</span>
             <span className="title">{m.sender}</span>
+            {savedId === m.id && (
+              <span className="small" style={{ color: "var(--good, #2e7d32)", fontWeight: 700 }}>
+                ✓ saved
+              </span>
+            )}
           </div>
           <p style={{ whiteSpace: "pre-wrap", margin: "6px 0" }}>{m.text}</p>
           <div className="checks" style={{ margin: 0 }}>
             {MESSAGE_TAGS.map((t) => (
               <button
                 key={t}
-                className={`chip ${m.tags.includes(t) ? "on" : ""}`}
+                className={`chip ${(m.tags || []).includes(t) ? "on" : ""}`}
                 onClick={() => toggleTag(m, t)}
               >
                 {t}
@@ -270,7 +357,7 @@ export default function Messages() {
         </div>
       ))}
 
-      {messages && messages.length === 0 && (
+      {total === 0 && (
         <p className="muted" style={{ marginTop: 14 }}>
           No messages yet. Paste a conversation or upload an export to begin.
         </p>

@@ -3,6 +3,7 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../db";
 import { QUICK_ACTIONS } from "../claude";
 import { handoff } from "../handoff";
+import DataSafety from "./DataSafety";
 
 interface Props {
   go: (view: string) => void;
@@ -218,6 +219,8 @@ export default function Dashboard({ go, displayName }: Props) {
           In immediate danger? Call 911. Any time, any hour: 1-800-799-7233 or text START to 88788.
         </p>
       </div>
+
+      <DataSafety compact />
     </div>
   );
 }

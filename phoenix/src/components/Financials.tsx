@@ -1,17 +1,18 @@
 import { useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, type FinancialItem } from "../db";
+import { useDraft } from "../useDraft";
 
 const TYPES: FinancialItem["type"][] = ["asset", "debt", "income", "expense"];
 const OWNERS: FinancialItem["owner"][] = ["mine", "theirs", "joint", "unknown"];
 
 export default function Financials() {
-  const [type, setType] = useState<FinancialItem["type"]>("asset");
-  const [name, setName] = useState("");
-  const [value, setValue] = useState("");
-  const [owner, setOwner] = useState<FinancialItem["owner"]>("joint");
-  const [separateProperty, setSeparateProperty] = useState(false);
-  const [notes, setNotes] = useState("");
+  const [type, setType] = useDraft<FinancialItem["type"]>("financials.type", "asset");
+  const [name, setName] = useDraft("financials.name", "");
+  const [value, setValue] = useDraft("financials.value", "");
+  const [owner, setOwner] = useDraft<FinancialItem["owner"]>("financials.owner", "joint");
+  const [separateProperty, setSeparateProperty] = useDraft("financials.separateProperty", false);
+  const [notes, setNotes] = useDraft("financials.notes", "");
 
   const items = useLiveQuery(() => db.financials.toArray(), []);
 

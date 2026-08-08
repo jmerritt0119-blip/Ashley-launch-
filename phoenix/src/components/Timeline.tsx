@@ -1,5 +1,6 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../db";
+import { usePaneActive } from "../paneContext";
 
 interface Entry {
   date: string;
@@ -10,7 +11,10 @@ interface Entry {
 }
 
 export default function Timeline() {
+  const active = usePaneActive();
+  // Suspended while this view is off screen — it reads the whole archive.
   const entries = useLiveQuery(async () => {
+    if (!active) return undefined;
     const [incidents, messages, evidence] = await Promise.all([
       db.incidents.toArray(),
       db.messages.filter((m) => m.starred).toArray(),
@@ -48,7 +52,7 @@ export default function Timeline() {
     ];
     all.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
     return all;
-  }, []);
+  }, [active]);
 
   return (
     <div>

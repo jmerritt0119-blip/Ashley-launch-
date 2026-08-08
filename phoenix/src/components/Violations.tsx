@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, VIOLATION_TYPES } from "../db";
 import { handoff } from "../handoff";
+import { useDraft } from "../useDraft";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -10,16 +11,16 @@ interface Props {
 }
 
 export default function Violations({ go }: Props) {
-  const [date, setDate] = useState(today());
-  const [time, setTime] = useState("");
-  const [type, setType] = useState<string>(VIOLATION_TYPES[0]);
-  const [orderName, setOrderName] = useState("");
-  const [provision, setProvision] = useState("");
-  const [description, setDescription] = useState("");
-  const [childPresent, setChildPresent] = useState(true);
-  const [witnesses, setWitnesses] = useState("");
-  const [proof, setProof] = useState("");
-  const [reported, setReported] = useState("");
+  const [date, setDate] = useDraft("violations.date", today());
+  const [time, setTime] = useDraft("violations.time", "");
+  const [type, setType] = useDraft<string>("violations.type", VIOLATION_TYPES[0]);
+  const [orderName, setOrderName] = useDraft("violations.orderName", "");
+  const [provision, setProvision] = useDraft("violations.provision", "");
+  const [description, setDescription] = useDraft("violations.description", "");
+  const [childPresent, setChildPresent] = useDraft("violations.childPresent", true);
+  const [witnesses, setWitnesses] = useDraft("violations.witnesses", "");
+  const [proof, setProof] = useDraft("violations.proof", "");
+  const [reported, setReported] = useDraft("violations.reported", "");
 
   const rows = useLiveQuery(() => db.violations.orderBy("date").reverse().toArray(), []);
 

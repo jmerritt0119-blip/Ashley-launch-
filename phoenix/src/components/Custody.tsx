@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../db";
+import { useDraft } from "../useDraft";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -18,12 +19,12 @@ const CUSTODY_TYPES = [
 ];
 
 export default function Custody() {
-  const [type, setType] = useState(CUSTODY_TYPES[0].key);
-  const [date, setDate] = useState(today());
-  const [time, setTime] = useState("");
-  const [narrative, setNarrative] = useState("");
-  const [witnesses, setWitnesses] = useState("");
-  const [severity, setSeverity] = useState(3);
+  const [type, setType] = useDraft("custody.type", CUSTODY_TYPES[0].key);
+  const [date, setDate] = useDraft("custody.date", today());
+  const [time, setTime] = useDraft("custody.time", "");
+  const [narrative, setNarrative] = useDraft("custody.narrative", "");
+  const [witnesses, setWitnesses] = useDraft("custody.witnesses", "");
+  const [severity, setSeverity] = useDraft("custody.severity", 3);
 
   const entries = useLiveQuery(
     () =>

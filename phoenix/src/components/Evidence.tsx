@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, type EvidenceItem } from "../db";
 import { exportEvidenceFilesZip } from "../exportCsv";
+import { useDraft } from "../useDraft";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const KINDS = ["photo", "screenshot", "document", "audio", "video", "other"];
@@ -40,10 +41,10 @@ function Preview({ item }: { item: EvidenceItem }) {
 }
 
 export default function Evidence() {
-  const [title, setTitle] = useState("");
-  const [date, setDate] = useState(today());
-  const [kind, setKind] = useState("photo");
-  const [notes, setNotes] = useState("");
+  const [title, setTitle] = useDraft("evidence.title", "");
+  const [date, setDate] = useDraft("evidence.date", today());
+  const [kind, setKind] = useDraft("evidence.kind", "photo");
+  const [notes, setNotes] = useDraft("evidence.notes", "");
   const [file, setFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const bulkRef = useRef<HTMLInputElement>(null);

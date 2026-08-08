@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, DATE_TYPES, type KeyDate } from "../db";
 import { downloadIcs } from "../ics";
+import { useDraft } from "../useDraft";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -16,12 +17,12 @@ interface Props {
 }
 
 export default function Dates({ prepWithAdvocate }: Props) {
-  const [title, setTitle] = useState("");
-  const [type, setType] = useState<string>("hearing");
-  const [date, setDate] = useState(today());
-  const [time, setTime] = useState("");
-  const [location, setLocation] = useState("");
-  const [notes, setNotes] = useState("");
+  const [title, setTitle] = useDraft("dates.title", "");
+  const [type, setType] = useDraft<string>("dates.type", "hearing");
+  const [date, setDate] = useDraft("dates.date", today());
+  const [time, setTime] = useDraft("dates.time", "");
+  const [location, setLocation] = useDraft("dates.location", "");
+  const [notes, setNotes] = useDraft("dates.notes", "");
 
   const dates = useLiveQuery(() => db.dates.orderBy("date").toArray(), []);
   const upcoming = (dates || []).filter((d) => daysUntil(d.date) >= 0);

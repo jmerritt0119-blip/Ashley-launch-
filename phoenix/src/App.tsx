@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { applyChrome, loadSettings, quickExit, saveSettings, type Settings } from "./settings";
+import { PaneActive } from "./paneContext";
 import PinGate from "./components/PinGate";
 import SafetyNotice from "./components/SafetyNotice";
 import Dashboard from "./components/Dashboard";
@@ -39,11 +40,52 @@ const VIEWS: { key: string; label: string }[] = [
   { key: "settings", label: "Settings" },
 ];
 
+/**
+ * Renders a view once it has been visited, then keeps it alive off-screen.
+ * `hidden` is set through inline display so a view's own layout rules can't
+ * accidentally reveal it, and printing only ever sees the visible pane.
+ */
+function Pane({
+  on,
+  me,
+  mounted,
+  children,
+}: {
+  on: string;
+  me: string;
+  mounted: string[];
+  children: ReactNode;
+}) {
+  if (!mounted.includes(me)) return null;
+  const active = on === me;
+  return (
+    <PaneActive.Provider value={active}>
+      <div style={active ? undefined : { display: "none" }} aria-hidden={!active}>
+        {children}
+      </div>
+    </PaneActive.Provider>
+  );
+}
+
 export default function App() {
   const [settings, setSettings] = useState<Settings>(() => loadSettings());
   const [locked, setLocked] = useState<boolean>(() => !!loadSettings().pinHash);
   const [view, setView] = useState("dashboard");
+  /**
+   * Views are mounted on first visit and then kept alive, hidden rather than
+   * destroyed. Tearing a view down on every tab switch threw away whatever was
+   * half-typed in it — a partly written incident, a paste waiting to be
+   * imported. Nothing she has typed may disappear because she looked at
+   * something else. (Forms additionally mirror to disk via useDraft, so even
+   * closing the browser is survivable.)
+   */
+  const [mounted, setMounted] = useState<string[]>(["dashboard"]);
   const lastEsc = useRef(0);
+
+  const go = useCallback((next: string) => {
+    setMounted((m) => (m.includes(next) ? m : [...m, next]));
+    setView(next);
+  }, []);
 
   const update = useCallback((patch: Partial<Settings>) => {
     setSettings((s) => {
@@ -68,10 +110,13 @@ export default function App() {
     return () => mq.removeEventListener("change", onChange);
   }, [settings]);
 
-  const prepWithAdvocate = useCallback((prompt: string) => {
-    sessionStorage.setItem("phx_advocate_prefill", prompt);
-    setView("advocate");
-  }, []);
+  const prepWithAdvocate = useCallback(
+    (prompt: string) => {
+      sessionStorage.setItem("phx_advocate_prefill", prompt);
+      go("advocate");
+    },
+    [go]
+  );
 
   // Esc pressed twice within 800ms → leave immediately.
   useEffect(() => {
@@ -135,36 +180,73 @@ export default function App() {
 
       <nav className="nav no-print">
         {VIEWS.map((v) => (
-          <button
-            key={v.key}
-            className={view === v.key ? "active" : ""}
-            onClick={() => setView(v.key)}
-          >
+          <button key={v.key} className={view === v.key ? "active" : ""} onClick={() => go(v.key)}>
             {v.label}
           </button>
         ))}
       </nav>
 
       <main className="main">
-        {view === "dashboard" && <Dashboard go={setView} displayName={settings.displayName} />}
-        {view === "incidents" && <Incidents />}
-        {view === "custody" && <Custody />}
-        {view === "violations" && <Violations go={setView} />}
-        {view === "messages" && <Messages />}
-        {view === "evidence" && <Evidence />}
-        {view === "financials" && <Financials />}
-        {view === "dates" && <Dates prepWithAdvocate={prepWithAdvocate} />}
-        {view === "scan" && (
-          <Scan settings={settings} goSettings={() => setView("settings")} update={update} />
-        )}
-        {view === "timeline" && <Timeline />}
-        {view === "advocate" && <Advocate settings={settings} goSettings={() => setView("settings")} />}
-        {view === "documents" && <Documents />}
-        {view === "packet" && <Packet displayName={settings.displayName} />}
-        {view === "safety" && <SafetyPlan />}
-        {view === "search" && <Search go={setView} settings={settings} />}
-        {view === "resources" && <Resources />}
-        {view === "settings" && <SettingsPage settings={settings} update={update} />}
+        <Pane on={view} me="dashboard" mounted={mounted}>
+          <Dashboard go={go} displayName={settings.displayName} />
+        </Pane>
+        <Pane on={view} me="incidents" mounted={mounted}>
+          <Incidents />
+        </Pane>
+        <Pane on={view} me="custody" mounted={mounted}>
+          <Custody />
+        </Pane>
+        <Pane on={view} me="violations" mounted={mounted}>
+          <Violations go={go} />
+        </Pane>
+        <Pane on={view} me="messages" mounted={mounted}>
+          <Messages />
+        </Pane>
+        <Pane on={view} me="evidence" mounted={mounted}>
+          <Evidence />
+        </Pane>
+        <Pane on={view} me="financials" mounted={mounted}>
+          <Financials />
+        </Pane>
+        <Pane on={view} me="dates" mounted={mounted}>
+          <Dates prepWithAdvocate={prepWithAdvocate} />
+        </Pane>
+        <Pane on={view} me="scan" mounted={mounted}>
+          <Scan
+            settings={settings}
+            goSettings={() => go("settings")}
+            update={update}
+            active={view === "scan"}
+          />
+        </Pane>
+        <Pane on={view} me="timeline" mounted={mounted}>
+          <Timeline />
+        </Pane>
+        <Pane on={view} me="advocate" mounted={mounted}>
+          <Advocate
+            settings={settings}
+            goSettings={() => go("settings")}
+            active={view === "advocate"}
+          />
+        </Pane>
+        <Pane on={view} me="documents" mounted={mounted}>
+          <Documents />
+        </Pane>
+        <Pane on={view} me="packet" mounted={mounted}>
+          <Packet displayName={settings.displayName} />
+        </Pane>
+        <Pane on={view} me="safety" mounted={mounted}>
+          <SafetyPlan />
+        </Pane>
+        <Pane on={view} me="search" mounted={mounted}>
+          <Search go={go} settings={settings} />
+        </Pane>
+        <Pane on={view} me="resources" mounted={mounted}>
+          <Resources />
+        </Pane>
+        <Pane on={view} me="settings" mounted={mounted}>
+          <SettingsPage settings={settings} update={update} />
+        </Pane>
       </main>
 
       {!settings.safetyAcknowledged && (
