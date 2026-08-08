@@ -68,10 +68,15 @@ jobs:
           echo "--- first 300 bytes of AI endpoint reply ---"
           head -c 300 /tmp/api.out; echo
 
-          # Cloud vault round-trip: store ciphertext, read it back, delete it.
-          # This is what multi-device and attorney sharing depend on, so it is
-          # proven on every deploy rather than assumed.
-          CODE="ZZZZ-TEST-$(date +%N | cut -c1-4)-CHEK"
+          # Cloud vault round-trip, proven on every deploy rather than assumed.
+          #
+          # ONE fixed code, deliberately. A per-run code minted a fresh vault on
+          # every deploy, and because there is no delete route (survivors' data
+          # must not be wipeable over the network) those test vaults could never
+          # be cleaned up — unbounded storage growth, forever. Reusing one code
+          # means the function's own version pruning caps this at ten blobs for
+          # all time, however often we deploy.
+          CODE="ZZZZ-TEST-CHEK-0001"
           vput=$(curl -s -o /tmp/v.out -w '%{http_code}' -m 25 -X PUT \
             -H 'content-type: application/json' \
             --data '{"format":"phoenix-encrypted","v":1,"salt":"c2FsdA==","iv":"aXYxMjM=","data":"ZmFrZQ=="}' \
@@ -81,13 +86,22 @@ jobs:
           echo "GET /api/vault -> HTTP $vget"
           head -c 200 /tmp/vg.out; echo
 
+          # Which version did that write become? Versions accumulate across
+          # deploys now, so read the real number instead of assuming it is 1.
+          FIRST=$(jq -r '.version // empty' /tmp/vg.out 2>/dev/null || echo "")
+          echo "first copy is version $FIRST"
+
           # An overwrite must not destroy the previous copy, and there must be
           # no way at all to delete a survivor's vault over the network.
           curl -s -o /dev/null -m 25 -X PUT -H 'content-type: application/json' \
             --data '{"format":"phoenix-encrypted","v":1,"salt":"c2FsdA==","iv":"aXYxMjM=","data":"c2Vjb25k"}' \
             "$URL/api/vault?code=$CODE" || true
-          v1=$(curl -s -m 25 "$URL/api/vault?code=$CODE&version=1" || echo "")
-          echo "--- version 1 after overwrite ---"; echo "$v1" | head -c 160; echo
+          if [ -z "$FIRST" ]; then
+            echo "::error::Vault GET did not report a version number."
+            exit 1
+          fi
+          v1=$(curl -s -m 25 "$URL/api/vault?code=$CODE&version=$FIRST" || echo "")
+          echo "--- version $FIRST after overwrite ---"; echo "$v1" | head -c 160; echo
           if ! echo "$v1" | grep -q "ZmFrZQ=="; then
             echo "::error::An overwrite destroyed the previous vault version."
             exit 1
