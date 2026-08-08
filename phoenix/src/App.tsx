@@ -17,6 +17,7 @@ import Timeline from "./components/Timeline";
 import Dates from "./components/Dates";
 import Scan from "./components/Scan";
 import Packet from "./components/Packet";
+import ForAttorney from "./components/ForAttorney";
 import Advocate from "./components/Advocate";
 import Documents from "./components/Documents";
 import SafetyPlan from "./components/SafetyPlan";
@@ -28,6 +29,7 @@ const VIEWS: { key: string; label: string }[] = [
   { key: "dashboard", label: "Home" },
   { key: "advocate", label: "Ask the AI" },
   { key: "scan", label: "Upload & scan" },
+  { key: "attorney", label: "For my attorney" },
   { key: "incidents", label: "Incidents" },
   { key: "custody", label: "Custody" },
   { key: "violations", label: "Violations" },
@@ -40,7 +42,7 @@ const VIEWS: { key: string; label: string }[] = [
   { key: "timeline", label: "Timeline" },
   { key: "financials", label: "Financials" },
   { key: "documents", label: "Documents" },
-  { key: "packet", label: "Packet" },
+  { key: "packet", label: "Printable packet" },
   { key: "safety", label: "Safety plan" },
   { key: "resources", label: "Resources" },
   { key: "settings", label: "Settings" },
@@ -246,6 +248,9 @@ export default function App() {
         </Pane>
         <Pane on={view} me="documents" mounted={mounted}>
           <Documents />
+        </Pane>
+        <Pane on={view} me="attorney" mounted={mounted}>
+          <ForAttorney settings={settings} />
         </Pane>
         <Pane on={view} me="packet" mounted={mounted}>
           <Packet displayName={settings.displayName} />
