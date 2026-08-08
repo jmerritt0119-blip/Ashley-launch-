@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { db, findDuplicateMessages } from "../db";
+import { dismissRepairNotice, lastRepair, type RepairReport } from "../autoRepair";
 import {
   canPromptInstall,
   ensurePersistence,
@@ -35,6 +36,7 @@ export default function DataSafety({ compact = false }: { compact?: boolean }) {
   const [note, setNote] = useState<string | null>(null);
   const [showIos, setShowIos] = useState(false);
   const [dups, setDups] = useState<{ groups: number; removable: number[] } | null>(null);
+  const [repair, setRepair] = useState<RepairReport | null>(null);
 
   const scanForDuplicates = async () => {
     setBusy("dups");
@@ -73,6 +75,7 @@ export default function DataSafety({ compact = false }: { compact?: boolean }) {
   const refresh = useCallback(async () => {
     setReport(await storageReport());
     setSnaps(await listSnapshots());
+    setRepair(await lastRepair());
   }, []);
 
   useEffect(() => {
@@ -129,6 +132,29 @@ export default function DataSafety({ compact = false }: { compact?: boolean }) {
   return (
     <div className="panel">
       <h2>Is my case safe?</h2>
+
+      {repair && (
+        <div className="notice calm">
+          <strong>Your archive has been tidied automatically.</strong> The same message export had
+          been uploaded more than once, so every text was stored several times over.{" "}
+          {repair.removed.toLocaleString()} duplicate copies were removed and{" "}
+          {repair.kept.toLocaleString()} messages remain — one of each.
+          <br />
+          Nothing was lost. Every distinct message is still here, any stars and tags you had added
+          were carried onto the copy that stayed, and a restore point was saved first in case you
+          ever want the old state back.
+          <button
+            className="chip"
+            style={{ marginTop: 8 }}
+            onClick={() => {
+              void dismissRepairNotice();
+              setRepair(null);
+            }}
+          >
+            got it
+          </button>
+        </div>
+      )}
 
       <ul className="small" style={{ lineHeight: 1.8, paddingLeft: 18, margin: "6px 0 12px" }}>
         <li>

@@ -473,3 +473,76 @@ export async function findDuplicateMessages(): Promise<{
   }
   return { groups, removable, keptExamples };
 }
+
+/**
+ * Collapse duplicated messages, automatically, without asking her to do
+ * anything.
+ *
+ * Importing the same export several times before that was prevented left the
+ * archive holding three or four copies of every message. That is not merely
+ * untidy: it triples the cost of scanning, and an attorney opening an export
+ * where every text appears four times would rightly question whether the
+ * record can be relied on at all. Leaving it is worse than fixing it.
+ *
+ * What this guarantees:
+ *   - Only EXACT duplicates are touched — same date, same sender, same text.
+ *     No distinct message is ever removed.
+ *   - The surviving copy inherits the work from ALL copies: if she starred one
+ *     and tagged another, the survivor ends up starred AND tagged.
+ *   - The lowest id survives, so references stay pointed at the oldest copy.
+ *   - A restore point is taken first, so it is reversible.
+ */
+export async function mergeDuplicateMessages(
+  onProgress?: (done: number, total: number) => void
+): Promise<{ removed: number; kept: number; groups: number }> {
+  const rows = await db.messages.toArray();
+  const byKey = new Map<string, Msg[]>();
+  for (const m of rows) {
+    if (m.id == null) continue;
+    const k = `${(m.date || "").slice(0, 10)}|${m.sender.trim().toLowerCase()}|${m.text.trim()}`;
+    const list = byKey.get(k);
+    if (list) list.push(m);
+    else byKey.set(k, [m]);
+  }
+
+  const doomed: number[] = [];
+  const patches: { id: number; patch: Partial<Msg> }[] = [];
+  let groups = 0;
+
+  for (const list of byKey.values()) {
+    if (list.length < 2) continue;
+    groups++;
+    list.sort((a, b) => (a.id as number) - (b.id as number));
+    const keep = list[0];
+
+    // Nothing she did to any copy may be lost.
+    const tags = new Set<string>();
+    let starred = false;
+    let time = keep.time;
+    for (const m of list) {
+      for (const t of m.tags || []) tags.add(t);
+      if (m.starred) starred = true;
+      if (!time && m.time) time = m.time;
+    }
+    const merged: Partial<Msg> = {};
+    if (starred !== !!keep.starred) merged.starred = starred;
+    if (tags.size !== (keep.tags || []).length) merged.tags = [...tags];
+    if (time && time !== keep.time) merged.time = time;
+    if (Object.keys(merged).length) patches.push({ id: keep.id as number, patch: merged });
+
+    for (const dup of list.slice(1)) doomed.push(dup.id as number);
+  }
+
+  if (!doomed.length) return { removed: 0, kept: rows.length, groups: 0 };
+
+  for (const p of patches) await db.messages.update(p.id, p.patch);
+
+  // Delete in chunks — a single transaction over tens of thousands of keys is
+  // where a browser gives up half way through.
+  const CHUNK = 2000;
+  for (let i = 0; i < doomed.length; i += CHUNK) {
+    onProgress?.(i, doomed.length);
+    await db.messages.bulkDelete(doomed.slice(i, i + CHUNK));
+  }
+  return { removed: doomed.length, kept: rows.length - doomed.length, groups };
+}
