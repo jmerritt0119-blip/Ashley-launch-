@@ -214,8 +214,8 @@ export default function Dashboard({ go, displayName, settings }: Props) {
           <button className="btn secondary sm" onClick={() => go("dates")}>
             + Add a court date
           </button>
-          <button className="btn secondary sm" onClick={() => go("packet")}>
-            Build attorney packet
+          <button className="btn secondary sm" onClick={() => go("attorney")}>
+            Send everything to my attorney
           </button>
         </div>
         <p className="muted small" style={{ marginTop: 8 }}>

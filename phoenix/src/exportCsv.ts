@@ -2,6 +2,7 @@
 import { db } from "./db";
 import { buildZip, type ZipEntry } from "./zip";
 import { refEvi, refInc, refJrn, refMsg, refVio, REF_KEY } from "./refs";
+import { buildCaseIndexHtml, buildChronology, buildCoverLetter } from "./attorneyPacket";
 
 function csvEscape(v: unknown): string {
   const s = String(v ?? "");
@@ -277,7 +278,8 @@ export async function exportJournalCsv(): Promise<void> {
  * It is assembled entirely on this device — nothing is uploaded to build it.
  */
 export async function exportEverythingZip(
-  onProgress?: (done: number, total: number) => void
+  onProgress?: (done: number, total: number) => void,
+  who: { name?: string; county?: string } = {}
 ): Promise<{ files: number; bytes: number }> {
   const [incidents, messages, evidence, financials, dates, documents, violations, journal] =
     await Promise.all([
@@ -386,7 +388,14 @@ export async function exportEverythingZip(
   text(
     "README.txt",
     [
-      `PHOENIX CASE FILE — exported ${now.toLocaleString()}`,
+      `CASE FILE — exported ${now.toLocaleString()}`,
+      "",
+      "START HERE:",
+      "  OPEN-ME.html       the whole case in your browser — searchable, filterable,",
+      "                     cross-referenced. Double-click it. Nothing to install.",
+      "",
+      "  COVER-LETTER.txt   what this is, and what is and is not verified",
+      "  CHRONOLOGY.txt     everything in date order, with references",
       "",
       REF_KEY,
       "",
@@ -427,11 +436,22 @@ export async function exportEverythingZip(
     ].join("\n")
   );
 
+  // The two files a lawyer opens before anything else, at the top level.
+  // The page a lawyer opens first: the whole case, browsable and searchable,
+  // needing nothing but a browser.
+  entries.unshift({
+    name: "OPEN-ME.html",
+    blob: new Blob([await buildCaseIndexHtml(who.name || "", who.county || "")], { type: "text/html;charset=utf-8" }),
+    date: now,
+  });
+  text("COVER-LETTER.txt", await buildCoverLetter(who.name || "", who.county || ""));
+  text("CHRONOLOGY.txt", await buildChronology(who.name || ""));
+
   const zip = await buildZip(entries, onProgress);
   const url = URL.createObjectURL(zip);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `phoenix-complete-case-${stamp()}.zip`;
+  a.download = `case-file-${stamp()}.zip`;
   a.click();
   URL.revokeObjectURL(url);
   return { files: entries.length, bytes: zip.size };

@@ -133,9 +133,9 @@ export async function computeNextSteps(opts: {
   // --- tier 3: keeping it usable ---
   if (hasAnything && docs === 0 && violations === 0) {
     steps.push({
-      title: "Build the attorney packet",
-      why: "One file with everything in it, ready to hand over. Worth doing once now so it's not a scramble later.",
-      view: "packet",
+      title: "Get everything to your attorney",
+      why: "One button builds a single file with your whole case in it, organised the way a lawyer reads it — and tells you exactly what to send with it.",
+      view: "attorney",
       tier: 3,
     });
   }
