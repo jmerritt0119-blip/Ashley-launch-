@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { autoSnapshot, ensurePersistence } from "./safety";
+import { autoRepair } from "./autoRepair";
 import "./styles.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
@@ -25,6 +26,11 @@ void ensurePersistence();
 // It costs nothing when nothing has changed and is the difference between a
 // mistake being an inconvenience and being the end of a case.
 void autoSnapshot();
+
+// Collapse duplicate messages left by importing the same export more than
+// once. Cheap when there is nothing to do, and it means she opens the app to a
+// correct archive rather than to a chore.
+void autoRepair();
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) void autoSnapshot();
 });
