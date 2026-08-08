@@ -118,6 +118,7 @@ function countsOf(data: any): Record<string, number> {
     "dates",
     "documents",
     "violations",
+    "journal",
   ];
   const out: Record<string, number> = {};
   for (const k of keys) out[k] = Array.isArray(data[k]) ? data[k].length : 0;

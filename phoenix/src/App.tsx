@@ -8,6 +8,7 @@ import Incidents from "./components/Incidents";
 import Custody from "./components/Custody";
 import Violations from "./components/Violations";
 import Messages from "./components/Messages";
+import Journal from "./components/Journal";
 import Evidence from "./components/Evidence";
 import Financials from "./components/Financials";
 import Timeline from "./components/Timeline";
@@ -29,6 +30,7 @@ const VIEWS: { key: string; label: string }[] = [
   { key: "custody", label: "Custody" },
   { key: "violations", label: "Violations" },
   { key: "messages", label: "Messages" },
+  { key: "journal", label: "Journal" },
   { key: "evidence", label: "Evidence" },
   { key: "dates", label: "Dates" },
   { key: "timeline", label: "Timeline" },
@@ -201,6 +203,9 @@ export default function App() {
         </Pane>
         <Pane on={view} me="messages" mounted={mounted}>
           <Messages />
+        </Pane>
+        <Pane on={view} me="journal" mounted={mounted}>
+          <Journal go={go} />
         </Pane>
         <Pane on={view} me="evidence" mounted={mounted}>
           <Evidence />

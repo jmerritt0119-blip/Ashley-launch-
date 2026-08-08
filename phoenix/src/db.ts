@@ -149,6 +149,28 @@ export interface KvRow {
   value: any;
 }
 
+/**
+ * A dated journal entry. Contemporaneous writing is some of the most
+ * persuasive evidence there is — a record made at the time, before there was
+ * a case to win. Kept dated and separate from Documents for exactly that
+ * reason: a judge weighs "written that night" very differently from "written
+ * for court".
+ */
+export interface JournalEntry {
+  id?: number;
+  date: string; // YYYY-MM-DD
+  time?: string;
+  title?: string;
+  body: string;
+  mood?: string;
+  tags: string[];
+  /** Written at the time, rather than recalled later. */
+  contemporaneous: boolean;
+  source: string; // typed | imported
+  createdAt: number;
+  updatedAt: number;
+}
+
 /** A rolling on-device restore point. See safety.ts. */
 export interface Snapshot {
   id?: number;
@@ -169,6 +191,7 @@ class PhoenixDB extends Dexie {
   dates!: Table<KeyDate, number>;
   documents!: Table<Doc, number>;
   violations!: Table<Violation, number>;
+  journal!: Table<JournalEntry, number>;
   snapshots!: Table<Snapshot, number>;
   kv!: Table<KvRow, string>;
 
@@ -195,6 +218,9 @@ class PhoenixDB extends Dexie {
     this.version(5).stores({
       snapshots: "++id, createdAt",
     });
+    this.version(6).stores({
+      journal: "++id, date, createdAt",
+    });
   }
 }
 
@@ -211,7 +237,7 @@ export async function wipeAllData(): Promise<void> {
  *   their bytes are left out — keeps the cloud vault small enough to sync.
  */
 export async function exportAllData(includeFiles = true) {
-  const [incidents, messages, evidence, financials, chat, dates, documents, violations, kv] =
+  const [incidents, messages, evidence, financials, chat, dates, documents, violations, journal, kv] =
     await Promise.all([
       db.incidents.toArray(),
       db.messages.toArray(),
@@ -221,6 +247,7 @@ export async function exportAllData(includeFiles = true) {
       db.dates.toArray(),
       db.documents.toArray(),
       db.violations.toArray(),
+      db.journal.toArray(),
       db.kv.toArray(),
     ]);
 
@@ -247,6 +274,7 @@ export async function exportAllData(includeFiles = true) {
     dates,
     documents,
     violations,
+    journal,
     kv,
   };
 }
@@ -272,6 +300,7 @@ export async function importAllData(data: any): Promise<void> {
       db.dates,
       db.documents,
       db.violations,
+      db.journal,
       db.kv,
     ],
     async () => {
@@ -314,6 +343,9 @@ export async function importAllData(data: any): Promise<void> {
       );
       await addNew(db.violations, data.violations || [], (v: any) =>
         `${v.date}|${v.time || ""}|${v.type}|${(v.description || "").slice(0, 200)}`
+      );
+      await addNew(db.journal, data.journal || [], (j: any) =>
+        `${j.date}|${j.time || ""}|${(j.body || "").slice(0, 300)}`
       );
       if (data.kv?.length) await db.kv.bulkPut(data.kv);
     }
