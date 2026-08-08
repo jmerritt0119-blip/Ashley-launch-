@@ -13,6 +13,9 @@ import Dates from "./components/Dates";
 import Scan from "./components/Scan";
 import Packet from "./components/Packet";
 import Advocate from "./components/Advocate";
+import Documents from "./components/Documents";
+import SafetyPlan from "./components/SafetyPlan";
+import Search from "./components/Search";
 import Resources from "./components/Resources";
 import SettingsPage from "./components/SettingsPage";
 
@@ -27,7 +30,9 @@ const VIEWS: { key: string; label: string }[] = [
   { key: "dates", label: "Dates" },
   { key: "timeline", label: "Timeline" },
   { key: "advocate", label: "Advocate" },
+  { key: "documents", label: "Documents" },
   { key: "packet", label: "Packet" },
+  { key: "safety", label: "Safety plan" },
   { key: "resources", label: "Resources" },
   { key: "settings", label: "Settings" },
 ];
@@ -101,6 +106,9 @@ export default function App() {
           {!settings.discreet && <span className="sub">case builder for survivors</span>}
         </div>
         <div className="spacer" />
+        <button className="lock-btn" onClick={() => setView("search")} title="Search the case file">
+          🔍
+        </button>
         {settings.pinHash && (
           <button className="lock-btn" onClick={() => setLocked(true)} title="Lock the app">
             Lock
@@ -138,7 +146,10 @@ export default function App() {
         {view === "scan" && <Scan settings={settings} goSettings={() => setView("settings")} />}
         {view === "timeline" && <Timeline />}
         {view === "advocate" && <Advocate settings={settings} goSettings={() => setView("settings")} />}
+        {view === "documents" && <Documents />}
         {view === "packet" && <Packet displayName={settings.displayName} />}
+        {view === "safety" && <SafetyPlan />}
+        {view === "search" && <Search go={setView} />}
         {view === "resources" && <Resources />}
         {view === "settings" && <SettingsPage settings={settings} update={update} />}
       </main>

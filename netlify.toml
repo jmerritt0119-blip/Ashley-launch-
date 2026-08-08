@@ -1,0 +1,8 @@
+# Root Netlify configuration: this repo's Netlify site builds the Phoenix app.
+# (netlify.toml settings take precedence over UI build settings, so the site
+# connected to this repo — previously Jarvis — now builds phoenix/ instead.)
+# Full app config lives in phoenix/netlify.toml; ANTHROPIC_API_KEY comes from
+# the site's environment variables.
+
+[build]
+  base = "phoenix"

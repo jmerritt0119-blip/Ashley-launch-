@@ -104,6 +104,19 @@ export interface KeyDate {
   createdAt: number;
 }
 
+export interface Doc {
+  id?: number;
+  title: string;
+  content: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface KvRow {
+  key: string;
+  value: any;
+}
+
 // Deliberately neutral database name — it is visible in browser dev tools.
 class PhoenixDB extends Dexie {
   incidents!: Table<Incident, number>;
@@ -112,6 +125,8 @@ class PhoenixDB extends Dexie {
   financials!: Table<FinancialItem, number>;
   chat!: Table<ChatMsg, number>;
   dates!: Table<KeyDate, number>;
+  documents!: Table<Doc, number>;
+  kv!: Table<KvRow, string>;
 
   constructor() {
     super("phx_notes");
@@ -125,6 +140,10 @@ class PhoenixDB extends Dexie {
     this.version(2).stores({
       dates: "++id, date, createdAt",
     });
+    this.version(3).stores({
+      documents: "++id, updatedAt, createdAt",
+      kv: "&key",
+    });
   }
 }
 
@@ -137,14 +156,17 @@ export async function wipeAllData(): Promise<void> {
 }
 
 export async function exportAllData() {
-  const [incidents, messages, evidence, financials, chat, dates] = await Promise.all([
-    db.incidents.toArray(),
-    db.messages.toArray(),
-    db.evidence.toArray(),
-    db.financials.toArray(),
-    db.chat.toArray(),
-    db.dates.toArray(),
-  ]);
+  const [incidents, messages, evidence, financials, chat, dates, documents, kv] =
+    await Promise.all([
+      db.incidents.toArray(),
+      db.messages.toArray(),
+      db.evidence.toArray(),
+      db.financials.toArray(),
+      db.chat.toArray(),
+      db.dates.toArray(),
+      db.documents.toArray(),
+      db.kv.toArray(),
+    ]);
 
   const evidenceSerialized = await Promise.all(
     evidence.map(async (e) => {
@@ -167,6 +189,8 @@ export async function exportAllData() {
     financials,
     chat,
     dates,
+    documents,
+    kv,
   };
 }
 
@@ -182,7 +206,7 @@ export async function importAllData(data: any): Promise<void> {
   });
   await db.transaction(
     "rw",
-    [db.incidents, db.messages, db.evidence, db.financials, db.chat, db.dates],
+    [db.incidents, db.messages, db.evidence, db.financials, db.chat, db.dates, db.documents, db.kv],
     async () => {
       if (data.incidents?.length) await db.incidents.bulkAdd(stripIds(data.incidents));
       if (data.messages?.length) await db.messages.bulkAdd(stripIds(data.messages));
@@ -190,6 +214,8 @@ export async function importAllData(data: any): Promise<void> {
       if (data.financials?.length) await db.financials.bulkAdd(stripIds(data.financials));
       if (data.chat?.length) await db.chat.bulkAdd(stripIds(data.chat));
       if (data.dates?.length) await db.dates.bulkAdd(stripIds(data.dates));
+      if (data.documents?.length) await db.documents.bulkAdd(stripIds(data.documents));
+      if (data.kv?.length) await db.kv.bulkPut(data.kv);
     }
   );
 }

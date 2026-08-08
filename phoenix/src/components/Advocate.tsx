@@ -105,6 +105,31 @@ export default function Advocate({ settings, goSettings }: Props) {
           <div className={`bubble ${c.role}`} key={c.id}>
             <div className="who">{c.role === "user" ? "You" : "The Advocate"}</div>
             {c.content}
+            {c.role === "assistant" && (
+              <div style={{ marginTop: 8 }}>
+                <button
+                  className="btn ghost sm"
+                  onClick={() => {
+                    const firstLine =
+                      c.content
+                        .split("\n")
+                        .map((l) => l.replace(/^[#>*\-\s]+/, "").trim())
+                        .find((l) => l.length > 0) || "Advocate notes";
+                    const now = Date.now();
+                    void db.documents
+                      .add({
+                        title: firstLine.slice(0, 80),
+                        content: c.content,
+                        createdAt: now,
+                        updatedAt: now,
+                      })
+                      .then(() => alert("Saved to Documents — edit, print, or export it there."));
+                  }}
+                >
+                  Save to documents
+                </button>
+              </div>
+            )}
           </div>
         ))}
         {busy && (

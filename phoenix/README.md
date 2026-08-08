@@ -21,6 +21,9 @@ organized, attorney-ready case — with her child's safety at the center.
 | **Deep scan** | Dump an entire report — full message export, journal, emails — and the AI finds every abuse instance and catalogs each as a dated, categorized entry (reviewed before saving) |
 | **Key dates** | Hearings, deadlines, exchanges — each exports to Apple Calendar (.ics) with 1-week and 1-day reminders, plus one-tap "prep me for this" via The Advocate |
 | **The Advocate** | Claude-powered case strategist: builds timelines, finds abuse patterns in the evidence, drafts declaration outlines, preps hearings and consults, answers questions 24/7 between attorney conversations |
+| **Documents** | Save any Advocate answer as a named, editable, printable work product (declaration drafts, hearing prep, question lists) |
+| **Safety plan** | Guided personal safety plan — escalation plan, go-bag checklist, documents to gather, tech safety steps, kids' plan — saved locally, printable |
+| **Search** | One search box (🔍 in the top bar) across incidents, messages, evidence, documents, and dates |
 | **Resources** | Hotlines, WomensLaw/legal aid, custody protections, lawful evidence-preservation guidance, financial rebuilding |
 
 ## Made for iPhone (and iPad/Mac)
