@@ -473,7 +473,6 @@ export async function findDuplicateMessages(): Promise<{
   }
   return { groups, removable, keptExamples };
 }
-<<<<<<< HEAD
 
 /**
  * Collapse duplicated messages, automatically, without asking her to do
@@ -547,5 +546,3 @@ export async function mergeDuplicateMessages(
   }
   return { removed: doomed.length, kept: rows.length - doomed.length, groups };
 }
-=======
->>>>>>> origin/main
