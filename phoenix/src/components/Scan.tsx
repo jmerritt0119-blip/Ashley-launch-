@@ -66,11 +66,6 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
   const estParts = Math.max(1, Math.ceil(text.trim().length / SCAN_CHUNK_SIZE));
 
   /**
-   * Save every message in a CSV export to the archive immediately, by code.
-   * This happens before the AI runs, so the record is complete and permanent
-   * even if the scan is interrupted or the model misses something.
-   */
-  /**
    * The facts list is the part an attorney can act on immediately, so it gets
    * written out as a document rather than living only in this view.
    */
@@ -95,6 +90,11 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     setAdded("Saved the case-building facts to Documents.");
   };
 
+  /**
+   * Save every message in a CSV export to the archive immediately, by code.
+   * This happens before the AI runs, so the record is complete and permanent
+   * even if the scan is interrupted or the model misses something.
+   */
   const archiveCsv = async (doc: string): Promise<number> => {
     const rows = detectCsvMessages(doc);
     if (!rows.length) return 0;
