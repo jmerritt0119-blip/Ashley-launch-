@@ -4,6 +4,7 @@ import { db, MESSAGE_TAGS, type Msg } from "../db";
 import { messagesFromCsv, messagesFromText } from "../parseMessages";
 import { ocrImages } from "../ocr";
 import { useDraft } from "../useDraft";
+import { searchMessages } from "../messageIndex";
 import { usePaneActive } from "../paneContext";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -43,28 +44,28 @@ export default function Messages() {
   }, [search]);
 
   /**
-   * Filtering happens inside the database cursor and stops at one page, so a
-   * tag click costs a page of rows rather than the entire archive.
+   * Searching runs against an in-memory index of the archive rather than
+   * walking the database each time, so a word that matches nothing is as fast
+   * as one that matches everything. Only the rows actually shown are read back
+   * out of the database, and they carry their current values.
    */
-  const page = useLiveQuery(async () => {
-    if (!active) return undefined;
-    let coll = db.messages.orderBy("date").reverse();
-    if (starredOnly || tagFilter || query) {
-      coll = coll.filter((m) => {
-        if (starredOnly && !m.starred) return false;
-        if (tagFilter && !(m.tags || []).includes(tagFilter)) return false;
-        if (query && !m.text.toLowerCase().includes(query) && !m.sender.toLowerCase().includes(query))
-          return false;
-        return true;
-      });
-    }
-    // One extra row tells us whether there are more without counting them all.
-    return coll.limit(PAGE + 1).toArray();
-  }, [query, tagFilter, starredOnly, active]);
-
+  const [result, setResult] = useState<{ rows: Msg[]; more: boolean } | undefined>(undefined);
   const total = useLiveQuery(() => db.messages.count(), [], 0);
-  const more = (page?.length || 0) > PAGE;
-  const visible = (page || []).slice(0, PAGE).map((m) => {
+
+  useEffect(() => {
+    if (!active) return;
+    let cancelled = false;
+    void searchMessages({ query, tag: tagFilter, starredOnly, limit: PAGE }).then((r) => {
+      if (!cancelled) setResult(r);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [query, tagFilter, starredOnly, active, total, savedId]);
+
+  const page = result?.rows;
+  const more = !!result?.more;
+  const visible = (page || []).map((m) => {
     const patch = m.id != null ? edits[m.id] : undefined;
     return patch ? { ...m, ...patch } : m;
   });
@@ -347,7 +348,20 @@ export default function Messages() {
             <button
               className="chip"
               onClick={() => {
-                if (m.id != null && confirm("Delete this message from the index?"))
+                if (
+                  m.id != null &&
+                  confirm(
+                    "Remove this message from your index?\n\n" +
+                      "Think carefully. Once a case is underway, deleting messages — even ones " +
+                      "that seem unimportant or embarrassing — can be raised against you as " +
+                      "destroying evidence, and courts can instruct that the missing material " +
+                      "would have hurt you.\n\n" +
+                      "Storage is not a reason to delete: your whole archive is a few megabytes, " +
+                      "smaller than one phone video. Nothing here slows the app down.\n\n" +
+                      "If a message just isn't relevant, leave it — an untouched record is what " +
+                      "makes the rest of it credible."
+                  )
+                )
                   void db.messages.delete(m.id);
               }}
             >
