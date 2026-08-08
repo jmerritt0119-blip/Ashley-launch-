@@ -1,5 +1,6 @@
 // CSV exports formatted for attorney / paralegal use.
 import { db } from "./db";
+import { buildZip, type ZipEntry } from "./zip";
 
 function csvEscape(v: unknown): string {
   const s = String(v ?? "");
@@ -99,6 +100,87 @@ export async function exportEvidenceCsv(): Promise<void> {
     ]);
   });
   downloadText(`evidence-index-${stamp()}.csv`, toCsv(rows));
+}
+
+const EXT_BY_TYPE: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/heic": "heic",
+  "image/gif": "gif",
+  "image/webp": "webp",
+  "video/quicktime": "mov",
+  "video/mp4": "mp4",
+  "audio/mpeg": "mp3",
+  "audio/mp4": "m4a",
+  "audio/wav": "wav",
+  "application/pdf": "pdf",
+};
+
+function safeName(s: string): string {
+  return (
+    s
+      .replace(/[\\/:*?"<>|]/g, "-")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 60) || "item"
+  );
+}
+
+function extFor(fileName?: string, fileType?: string): string {
+  const fromName = fileName?.match(/\.([a-z0-9]{1,5})$/i)?.[1];
+  if (fromName) return fromName.toLowerCase();
+  return EXT_BY_TYPE[(fileType || "").toLowerCase()] || "dat";
+}
+
+/**
+ * Package every stored evidence file into one .zip, named with the same
+ * exhibit numbers the printed packet and the evidence CSV use, plus a
+ * manifest so the attorney's office can see what's inside without opening
+ * each file.
+ */
+export async function exportEvidenceFilesZip(
+  onProgress?: (done: number, total: number) => void
+): Promise<number> {
+  // Same ordering as the packet, so E-001 here is E-001 there. Items without
+  // a stored file still consume their exhibit number.
+  const all = await db.evidence.orderBy("date").toArray();
+  const withFiles = all
+    .map((e, idx) => ({ item: e, ref: `E-${String(idx + 1).padStart(3, "0")}` }))
+    .filter((r) => r.item.blob);
+
+  if (withFiles.length === 0) return 0;
+
+  const manifest: any[][] = [
+    ["Exhibit #", "File in this zip", "Date", "Title", "Type", "Notes / location of original", "Tags"],
+  ];
+  const entries: ZipEntry[] = withFiles.map(({ item, ref }) => {
+    const name = `${ref}_${item.date}_${safeName(item.title)}.${extFor(item.fileName, item.fileType)}`;
+    manifest.push([
+      ref,
+      name,
+      item.date,
+      item.title,
+      item.kind,
+      item.notes || "",
+      item.tags.join("; "),
+    ]);
+    return { name, blob: item.blob as Blob, date: new Date(item.createdAt) };
+  });
+
+  entries.unshift({
+    name: "00_EXHIBIT-INDEX.csv",
+    blob: new Blob(["﻿" + toCsv(manifest)], { type: "text/csv;charset=utf-8" }),
+    date: new Date(),
+  });
+
+  const zip = await buildZip(entries, onProgress);
+  const url = URL.createObjectURL(zip);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `evidence-files-${stamp()}.zip`;
+  a.click();
+  URL.revokeObjectURL(url);
+  return withFiles.length;
 }
 
 export async function exportDatesCsv(): Promise<void> {
