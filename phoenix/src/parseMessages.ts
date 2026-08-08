@@ -2,6 +2,8 @@
 
 export interface ParsedMessage {
   date: string;
+  /** "HH:MM" when the export carried a time; "" when it genuinely didn't. */
+  time?: string;
   sender: string;
   text: string;
 }
@@ -79,7 +81,7 @@ export function messagesFromCsv(raw: string): ParsedMessage[] {
     const text = (r[textIdx] || "").trim();
     if (!text) continue;
     out.push({
-      date: normalizeDate((r[dateIdx] || "").trim()),
+      ...parseDateTime((r[dateIdx] || "").trim()),
       sender: (r[senderIdx] || "unknown").trim() || "unknown",
       text,
     });
@@ -118,7 +120,7 @@ export function messagesFromText(
       if (m && m.groups) {
         if (current) out.push(current);
         current = {
-          date: normalizeDate(m.groups.date.trim()),
+          ...parseDateTime(m.groups.date.trim()),
           sender: m.groups.sender.trim(),
           text: m.groups.text.trim(),
         };
@@ -162,4 +164,35 @@ export function normalizeDate(s: string): string {
     return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
   }
   return s;
+}
+
+
+/**
+ * Pull BOTH the date and the time out of a timestamp.
+ *
+ * normalizeDate deliberately returns only the day, which is right for a date
+ * column but throws away something that matters: when a message arrived.
+ * Forty messages between 1am and 4am is a pattern a court recognises, and it
+ * is invisible if every row says only "2024-03-14".
+ *
+ * Returns time as "HH:MM" (24-hour) when the source carried one, and "" when
+ * it genuinely didn't — never a guess.
+ */
+export function parseDateTime(s: string): { date: string; time: string } {
+  const date = normalizeDate(s);
+  if (!s) return { date, time: "" };
+  const cleaned = s.replace(/[[\]]/g, "").trim();
+
+  // 9:12 PM / 9:12:45 pm / 21:12 / 21:12:45, anywhere in the string.
+  const m = cleaned.match(/(\d{1,2}):(\d{2})(?::\d{2})?\s*([AaPp])?\.?[Mm]?\.?/);
+  if (!m) return { date, time: "" };
+
+  let hour = parseInt(m[1], 10);
+  const minute = m[2];
+  const half = (m[3] || "").toLowerCase();
+  if (half === "p" && hour < 12) hour += 12;
+  if (half === "a" && hour === 12) hour = 0;
+  if (hour > 23 || parseInt(minute, 10) > 59) return { date, time: "" };
+
+  return { date, time: `${String(hour).padStart(2, "0")}:${minute}` };
 }

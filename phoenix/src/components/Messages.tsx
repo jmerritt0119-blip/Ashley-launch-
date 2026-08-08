@@ -18,7 +18,9 @@ export default function Messages() {
   const [pasteText, setPasteText] = useDraft("messages.paste", "");
   const [defaultSender, setDefaultSender] = useDraft("messages.sender", "Him");
   const [defaultDate, setDefaultDate] = useState(today());
-  const [preview, setPreview] = useState<{ date: string; sender: string; text: string }[] | null>(null);
+  const [preview, setPreview] = useState<
+    { date: string; time?: string; sender: string; text: string }[] | null
+  >(null);
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
   const [tagFilter, setTagFilter] = useState("");
@@ -90,6 +92,7 @@ export default function Messages() {
     await db.messages.bulkAdd(
       preview.map((p) => ({
         date: p.date,
+        time: p.time || undefined,
         sender: p.sender,
         text: p.text,
         source,
