@@ -1,0 +1,25 @@
+# Netlify configuration for Phoenix Case Builder.
+#
+# Architecture: a static Vite front-end (published from `dist/`) plus a
+# standalone streaming Netlify Function (netlify/functions/advocate.mjs)
+# mapped to /api/advocate — the same pattern as the other apps in this repo.
+#
+# Set the site's "Base directory" to `phoenix`. Add ANTHROPIC_API_KEY in the
+# site's environment variables (the same key already used for /api/chat works).
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+# Single-page app: let the client handle its own view state.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

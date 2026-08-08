@@ -1,0 +1,93 @@
+# Phoenix — Case Builder for Survivors
+
+A private, local-first workspace that helps a survivor of domestic violence organize
+everything for a divorce and custody case — and an always-available AI case strategist
+("**The Advocate**") powered by Claude.
+
+Built for one job: turning a chaotic, frightening situation into a documented,
+organized, attorney-ready case — with her child's safety at the center.
+
+## What's inside
+
+| Section | What it does |
+| --- | --- |
+| **Incident log** | Structured, dated incident entries: narrative, categories (coercive control, threats, financial abuse…), severity, witnesses, police report #, medical care, children present |
+| **Custody log** | Fast structured logging of missed visits, exchange incidents, concerning statements, order violations, and a child's own disclosures — the record family courts act on |
+| **Messages** | Paste or upload text-message exports (WhatsApp formats and CSV parse automatically), then star and tag the significant ones (threat, control, admission…) |
+| **Evidence vault** | Photos, screenshots, documents, audio — stored on-device with notes on where originals live |
+| **Financials** | Assets, debts, income, expenses; joint vs. separate property; hidden-asset red flags to raise with counsel |
+| **Timeline** | Every dated item — incidents, starred messages, evidence — merged into one chronological case story |
+| **Attorney packet** | One-click printable/PDF compilation (chronology, flagged messages, exhibit index with E-numbers, financial summary) **plus CSV exports** (INC-/MSG-/E- numbered) for the attorney's office |
+| **The Advocate** | Claude-powered case strategist: builds timelines, finds abuse patterns in the evidence, drafts declaration outlines, preps hearings and consults, answers questions 24/7 between attorney conversations |
+| **Resources** | Hotlines, WomensLaw/legal aid, custody protections, lawful evidence-preservation guidance, financial rebuilding |
+
+## Safety design
+
+Survivors' tools carry different stakes, so:
+
+- **Local-first**: all data lives in the browser's IndexedDB on the device. No accounts, no server database.
+- **Quick Exit**: a permanent red Exit button (and double-`Esc`) instantly replaces the page with a weather search, with no history entry for the app page.
+- **PIN lock** with optional auto-lock when the tab loses focus.
+- **Discreet mode**: browser tab becomes "Recipe Box" with a neutral icon.
+- **Dark theme** for low-visibility use at night.
+- **Encrypted backups**: AES-GCM (PBKDF2, 210k iterations) passphrase-encrypted export/restore.
+- **Emergency erase**: one action wipes everything the app has stored.
+- **First-run safety notice**: monitored-device warning + hotline numbers (1-800-799-7233 / text START to 88788).
+
+> If a device may be monitored by an abuser, no app-level feature is enough — the
+> in-app guidance repeatedly points to safer devices and to techsafety.org.
+
+## The Advocate — AI design
+
+- **Persona**: relentless, meticulous, warm-steel case-prep strategist — fiercely on the
+  survivor's side, specialized in **custody protection where a parent is dangerous**
+  (protective orders covering children, emergency/ex parte custody, supervised visitation,
+  safe exchanges, best-interest factors).
+- **Guardrails that protect the case**: legal information & preparation, never "legal advice";
+  lawful evidence only (no account intrusion, no consent-law violations, no order violations);
+  facts only — no exaggeration, because exaggeration dies on cross-examination.
+- **Crisis-aware**: surfaces 911/hotline first if danger is described, then keeps helping.
+- **Models**: Claude Opus 5 by default; Fable 5 / Sonnet 5 / Haiku 4.5 selectable in Settings.
+- Streaming responses; safety-classifier refusals are handled gracefully and, where available,
+  automatically retried on Anthropic's recommended fallback model.
+- **Case snapshot**: with consent (on by default, toggleable), chats include a compact summary
+  of the logged case so answers cite actual entries.
+
+### Two connection modes
+
+1. **Server (default)** — a streaming Netlify Function (`netlify/functions/advocate.mjs`,
+   mapped to `/api/advocate`) holds `ANTHROPIC_API_KEY` in the site's environment variables.
+   Same pattern as this repo's other deployments; the key never reaches the browser.
+2. **Direct** — the user's own Anthropic API key, stored only on-device, calling the API
+   from the browser. Handy for local use.
+
+## Develop & deploy
+
+```bash
+cd phoenix
+npm install
+npm run dev        # local dev (UI only; for the server AI path use `netlify dev`)
+npm run build      # type-check + production build to dist/
+```
+
+**Netlify**: create a site from this repo with **Base directory = `phoenix`**
+(build command and publish dir come from `phoenix/netlify.toml`), and set
+`ANTHROPIC_API_KEY` in the site's environment variables. Optional: `PHOENIX_MODEL`
+to change the default model.
+
+## Honest limitations
+
+- This is an organizational and preparation tool. It is **not a law firm, not an attorney,
+  and not legal advice** — and it says so to the user, repeatedly, because that protects
+  both the user and her case.
+- PIN lock deters snooping; it is not device-level encryption. Backups are encrypted;
+  the live IndexedDB is only as safe as the device.
+- Data is per-browser: clearing site data deletes the records (mitigated by encrypted
+  backups, and the app tells the user so).
+
+## Roadmap ideas
+
+- Optional end-to-end-encrypted sync (Supabase) for multi-device + attorney share links
+- OCR on screenshots so photographed texts become searchable
+- iOS/Android wrapper with biometric lock and share-sheet import
+- Court-date calendar with preparation checklists per hearing type
