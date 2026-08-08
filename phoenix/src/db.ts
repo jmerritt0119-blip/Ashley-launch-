@@ -407,3 +407,69 @@ function base64ToBlob(b64: string, type: string): Blob {
   for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
   return new Blob([arr], { type });
 }
+
+/**
+ * Add messages, skipping any the archive already holds.
+ *
+ * Re-uploading the same export used to double the archive — 27,000 messages
+ * became 54,000, every duplicate costing money to scan again and muddying the
+ * record an attorney has to read. Importing the same file twice now adds
+ * nothing the second time, so she can re-upload without fear.
+ *
+ * A message is "already held" when its date, sender and text all match.
+ */
+export async function addMessagesDeduped(
+  rows: Omit<Msg, "id">[]
+): Promise<{ added: number; skipped: number }> {
+  if (!rows.length) return { added: 0, skipped: 0 };
+  const sig = (m: { date: string; sender: string; text: string }) =>
+    `${(m.date || "").slice(0, 10)}|${m.sender.trim().toLowerCase()}|${m.text.trim()}`;
+
+  const existing = new Set((await db.messages.toArray()).map(sig));
+  const fresh: Omit<Msg, "id">[] = [];
+  // Guard against duplicates inside the incoming file too.
+  for (const r of rows) {
+    const k = sig(r);
+    if (existing.has(k)) continue;
+    existing.add(k);
+    fresh.push(r);
+  }
+  if (fresh.length) await db.messages.bulkAdd(fresh as Msg[]);
+  return { added: fresh.length, skipped: rows.length - fresh.length };
+}
+
+/**
+ * Find messages the archive holds more than once — the result of importing the
+ * same export twice before that was prevented. Returns the ids that could be
+ * removed, always keeping the copy that carries her work: a starred or tagged
+ * duplicate is kept over a bare one, and the oldest is kept otherwise.
+ */
+export async function findDuplicateMessages(): Promise<{
+  groups: number;
+  removable: number[];
+  keptExamples: { text: string; copies: number }[];
+}> {
+  const rows = await db.messages.toArray();
+  const byKey = new Map<string, Msg[]>();
+  for (const m of rows) {
+    if (m.id == null) continue;
+    const k = `${(m.date || "").slice(0, 10)}|${m.sender.trim().toLowerCase()}|${m.text.trim()}`;
+    const list = byKey.get(k);
+    if (list) list.push(m);
+    else byKey.set(k, [m]);
+  }
+
+  const removable: number[] = [];
+  const keptExamples: { text: string; copies: number }[] = [];
+  let groups = 0;
+  for (const list of byKey.values()) {
+    if (list.length < 2) continue;
+    groups++;
+    // Whichever copy carries the most of her work survives.
+    const score = (m: Msg) => (m.starred ? 100 : 0) + (m.tags?.length || 0) * 10 + (m.time ? 1 : 0);
+    list.sort((a, b) => score(b) - score(a) || (a.id as number) - (b.id as number));
+    for (const dup of list.slice(1)) removable.push(dup.id as number);
+    if (keptExamples.length < 5) keptExamples.push({ text: list[0].text.slice(0, 120), copies: list.length });
+  }
+  return { groups, removable, keptExamples };
+}

@@ -1,6 +1,7 @@
 // CSV exports formatted for attorney / paralegal use.
 import { db } from "./db";
 import { buildZip, type ZipEntry } from "./zip";
+import { refEvi, refInc, refJrn, refMsg, refVio, REF_KEY } from "./refs";
 
 function csvEscape(v: unknown): string {
   const s = String(v ?? "");
@@ -297,26 +298,27 @@ export async function exportEverythingZip(
   const csv = (name: string, rows: any[][]) => text(name, toCsv(rows), "text/csv;charset=utf-8");
 
   csv("records/incidents.csv", [
-    ["Date", "Time", "Title", "Severity", "Categories", "Children present", "Location", "Witnesses", "Police report", "Medical", "Narrative"],
-    ...incidents.map((i) => [i.date, i.time || "", i.title, i.severity, i.categories.join("; "),
+    ["Ref", "Date", "Time", "Title", "Severity", "Categories", "Children present", "Location", "Witnesses", "Police report", "Medical", "Narrative"],
+    ...incidents.map((i) => [refInc(i.id), i.date, i.time || "", i.title, i.severity, i.categories.join("; "),
       i.childrenPresent ? "yes" : "no", i.location || "", i.witnesses || "", i.policeReport || "",
       i.medical || "", i.narrative]),
   ]);
 
   csv("records/messages.csv", [
-    ["Date", "From", "Flagged", "Tags", "Source", "Message"],
-    ...messages.map((m) => [m.date, m.sender, m.starred ? "yes" : "", (m.tags || []).join("; "), m.source, m.text]),
+    ["Ref", "Date", "Time", "From", "Flagged", "Tags", "Source", "Message"],
+    ...messages.map((m) => [refMsg(m.id), m.date, m.time || "", m.sender, m.starred ? "yes" : "",
+      (m.tags || []).join("; "), m.source, m.text]),
   ]);
 
   csv("records/journal.csv", [
-    ["Date", "Time", "Title", "Written at the time", "Source", "Entry"],
-    ...journal.map((j) => [j.date, j.time || "", j.title || "",
+    ["Ref", "Date", "Time", "Title", "Written at the time", "Source", "Entry"],
+    ...journal.map((j) => [refJrn(j.id), j.date, j.time || "", j.title || "",
       j.contemporaneous ? "yes" : "recalled later", j.source, j.body]),
   ]);
 
   csv("records/violations.csv", [
-    ["Date", "Time", "Type", "Order", "Provision", "Child present", "Witnesses", "Proof", "Reported", "Description"],
-    ...violations.map((v) => [v.date, v.time || "", v.type, v.orderName || "", v.provision || "",
+    ["Ref", "Date", "Time", "Type", "Order", "Provision", "Child present", "Witnesses", "Proof", "Reported", "Description"],
+    ...violations.map((v) => [refVio(v.id), v.date, v.time || "", v.type, v.orderName || "", v.provision || "",
       v.childPresent ? "yes" : "no", v.witnesses || "", v.proof || "", v.reported || "", v.description]),
   ]);
 
@@ -336,7 +338,7 @@ export async function exportEverythingZip(
     text(
       "journal/journal-full.txt",
       journal
-        .map((j) => `${j.date}${j.time ? " " + j.time : ""}${j.title ? " — " + j.title : ""}` +
+        .map((j) => `[${refJrn(j.id)}] ${j.date}${j.time ? " " + j.time : ""}${j.title ? " — " + j.title : ""}` +
           `${j.contemporaneous ? "" : "  [recalled later]"}\n\n${j.body}`)
         .join("\n\n" + "=".repeat(60) + "\n\n")
     );
@@ -346,7 +348,9 @@ export async function exportEverythingZip(
   }
 
   // Files, numbered to match the exhibit index used everywhere else.
-  const numbered = evidence.map((item, idx) => ({ item, ref: `E-${String(idx + 1).padStart(3, "0")}` }));
+  // Numbered from the row id, so a reference cited today still points at the
+  // same file after twenty more are added.
+  const numbered = evidence.map((item) => ({ item, ref: refEvi(item.id) }));
   const manifest: any[][] = [
     ["Exhibit #", "File in this zip", "Date", "Title", "Type", "Notes / location of original", "Tags"],
   ];
@@ -383,6 +387,8 @@ export async function exportEverythingZip(
     "README.txt",
     [
       `PHOENIX CASE FILE — exported ${now.toLocaleString()}`,
+      "",
+      REF_KEY,
       "",
       "WHAT IS IN HERE",
       `  records/            every record as a spreadsheet (opens in Excel, Numbers, Google Sheets)`,
