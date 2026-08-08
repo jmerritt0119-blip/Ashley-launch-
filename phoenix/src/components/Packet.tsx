@@ -8,6 +8,7 @@ import {
   exportFinancialsCsv,
   exportIncidentsCsv,
   exportMessagesCsv,
+  exportViolationsCsv,
 } from "../exportCsv";
 
 interface Props {
@@ -34,14 +35,15 @@ export default function Packet({ displayName }: Props) {
   };
 
   const data = useLiveQuery(async () => {
-    const [incidents, starred, evidence, financials] = await Promise.all([
+    const [incidents, starred, evidence, financials, violations] = await Promise.all([
       db.incidents.orderBy("date").toArray(),
       db.messages.filter((m) => m.starred).toArray(),
       db.evidence.orderBy("date").toArray(),
       db.financials.toArray(),
+      db.violations.orderBy("date").toArray(),
     ]);
     starred.sort((a, b) => (a.date < b.date ? -1 : 1));
-    return { incidents, starred, evidence, financials };
+    return { incidents, starred, evidence, financials, violations };
   }, []);
 
   const fmt = (n: number) => "$" + n.toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -79,6 +81,9 @@ export default function Packet({ displayName }: Props) {
             <button className="btn secondary sm" onClick={() => void exportFinancialsCsv()}>
               ⬇ Financial summary (.csv)
             </button>
+            <button className="btn secondary sm" onClick={() => void exportViolationsCsv()}>
+              ⬇ Order violations (.csv)
+            </button>
             <button className="btn secondary sm" onClick={() => void exportDatesCsv()}>
               ⬇ Key dates (.csv)
             </button>
@@ -112,8 +117,10 @@ export default function Packet({ displayName }: Props) {
         </p>
         <p className="small muted">
           Contents: {data?.incidents.length ?? 0} documented incidents ·{" "}
-          {data?.starred.length ?? 0} flagged messages · {data?.evidence.length ?? 0} evidence items ·{" "}
-          {data?.financials.length ?? 0} financial entries.
+          {data?.starred.length ?? 0} flagged messages ·{" "}
+          {(data?.violations.length ?? 0) > 0 ? `${data?.violations.length} order violations · ` : ""}
+          {data?.evidence.length ?? 0} evidence items · {data?.financials.length ?? 0} financial
+          entries.
         </p>
       </div>
 
@@ -169,8 +176,43 @@ export default function Packet({ displayName }: Props) {
         </p>
       </div>
 
+      {(data?.violations.length ?? 0) > 0 && (
+        <div className="panel page-break">
+          <h2>III. Court order violations</h2>
+          <p className="small muted">
+            Chronological log of breaches of standing orders, maintained contemporaneously by the
+            client. Prepared for review with counsel regarding enforcement.
+          </p>
+          {(data?.violations || []).map((v, idx) => (
+            <div className="item-card" key={v.id}>
+              <div className="head">
+                <span className="tag">V-{String(idx + 1).padStart(3, "0")}</span>
+                <span className="date">
+                  {v.date}
+                  {v.time ? ` · ${v.time}` : ""}
+                </span>
+                <span className="title">{v.type}</span>
+              </div>
+              <p style={{ whiteSpace: "pre-wrap", margin: "6px 0" }}>{v.description}</p>
+              <p className="small muted" style={{ margin: 0 }}>
+                {[
+                  v.orderName ? `Order: ${v.orderName}` : "",
+                  v.provision ? `Provision: ${v.provision}` : "",
+                  v.childPresent ? "Child involved" : "",
+                  v.witnesses ? `Witnesses: ${v.witnesses}` : "",
+                  v.proof ? `Proof: ${v.proof}` : "",
+                  v.reported ? `Reported: ${v.reported}` : "",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="panel page-break">
-        <h2>III. Evidence index</h2>
+        <h2>{(data?.violations.length ?? 0) > 0 ? "IV" : "III"}. Evidence index</h2>
         <table className="data">
           <thead>
             <tr>
@@ -200,7 +242,7 @@ export default function Packet({ displayName }: Props) {
       </div>
 
       <div className="panel page-break">
-        <h2>IV. Financial summary</h2>
+        <h2>{(data?.violations.length ?? 0) > 0 ? "V" : "IV"}. Financial summary</h2>
         <p>
           Assets {fmt(total("asset"))} · Debts {fmt(total("debt"))} · Monthly income {fmt(total("income"))} ·
           Monthly expenses {fmt(total("expense"))}

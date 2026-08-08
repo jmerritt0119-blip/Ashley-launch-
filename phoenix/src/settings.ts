@@ -14,6 +14,11 @@ export interface Settings {
   shareContext: boolean;
   safetyAcknowledged: boolean;
   displayName: string;
+  /** Texas county — lets The Advocate use the right court's local practice. */
+  county: string;
+  /** Cloud vault: multi-device + attorney sharing. Empty = not enabled. */
+  vaultCode: string;
+  vaultIncludeFiles: boolean;
 }
 
 export const MODEL_OPTIONS: { id: string; label: string; note: string }[] = [
@@ -54,6 +59,9 @@ const DEFAULTS: Settings = {
   shareContext: true,
   safetyAcknowledged: false,
   displayName: "",
+  county: "",
+  vaultCode: "",
+  vaultIncludeFiles: true,
 };
 
 export function loadSettings(): Settings {

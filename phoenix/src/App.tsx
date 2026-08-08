@@ -5,6 +5,7 @@ import SafetyNotice from "./components/SafetyNotice";
 import Dashboard from "./components/Dashboard";
 import Incidents from "./components/Incidents";
 import Custody from "./components/Custody";
+import Violations from "./components/Violations";
 import Messages from "./components/Messages";
 import Evidence from "./components/Evidence";
 import Financials from "./components/Financials";
@@ -25,6 +26,7 @@ const VIEWS: { key: string; label: string }[] = [
   { key: "scan", label: "Upload & scan" },
   { key: "incidents", label: "Incidents" },
   { key: "custody", label: "Custody" },
+  { key: "violations", label: "Violations" },
   { key: "messages", label: "Messages" },
   { key: "evidence", label: "Evidence" },
   { key: "dates", label: "Dates" },
@@ -147,6 +149,7 @@ export default function App() {
         {view === "dashboard" && <Dashboard go={setView} displayName={settings.displayName} />}
         {view === "incidents" && <Incidents />}
         {view === "custody" && <Custody />}
+        {view === "violations" && <Violations go={setView} />}
         {view === "messages" && <Messages />}
         {view === "evidence" && <Evidence />}
         {view === "financials" && <Financials />}
@@ -157,7 +160,7 @@ export default function App() {
         {view === "documents" && <Documents />}
         {view === "packet" && <Packet displayName={settings.displayName} />}
         {view === "safety" && <SafetyPlan />}
-        {view === "search" && <Search go={setView} />}
+        {view === "search" && <Search go={setView} settings={settings} />}
         {view === "resources" && <Resources />}
         {view === "settings" && <SettingsPage settings={settings} update={update} />}
       </main>

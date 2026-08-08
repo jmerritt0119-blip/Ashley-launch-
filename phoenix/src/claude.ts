@@ -41,6 +41,11 @@ export const QUICK_ACTIONS: { label: string; prompt: string }[] = [
       "Prepare me for a custody hearing where the other parent is abusive. What will the court focus on, what should my evidence binder contain from my records, how do I testify about the abuse calmly and credibly, and what requests should I be ready to make?",
   },
   {
+    label: "Practice cross-examination",
+    prompt:
+      "Put me through cross-examination practice. You are his attorney and you are trying to make me look unreliable, vindictive, or exaggerating. Using the actual weak points, gaps, and inconsistencies in my case file, ask me ONE hard question at a time and wait for my answer. After each answer, tell me plainly how it would land in a Texas courtroom, what I said that hurt me, and how to say it better — short, factual, no arguing with the lawyer, no speculating. Start with the hardest question you can find in my record.",
+  },
+  {
     label: "Prep for an attorney consult",
     prompt:
       "Give me a checklist of questions to ask in a divorce attorney consultation given the history of abuse and the danger to my child, plus exactly which documents I should bring from my records.",
@@ -55,7 +60,7 @@ export const QUICK_ACTIONS: { label: string; prompt: string }[] = [
 const trunc = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "…" : s);
 
 /** Compact plain-text snapshot of the case for AI context. */
-export async function buildCaseSnapshot(): Promise<string> {
+export async function buildCaseSnapshot(county?: string): Promise<string> {
   const todayStr = new Date().toISOString().slice(0, 10);
   // Opus 5 has a 1M-token window — give it the whole case, not a sample.
   // Every incident and every flagged message goes in; the full archive is
@@ -73,8 +78,15 @@ export async function buildCaseSnapshot(): Promise<string> {
   starredAll.sort((a, b) => (a.date < b.date ? 1 : -1));
   const starred = starredAll.slice(0, 600);
 
+  const violations = await db.violations.orderBy("date").reverse().limit(300).toArray();
+
   const lines: string[] = [];
   lines.push(`CASE SNAPSHOT (generated ${new Date().toISOString().slice(0, 10)})`);
+  lines.push(
+    county
+      ? `Jurisdiction: ${county} County, Texas — use this county's courts, local rules and standing orders; search for them when they matter.`
+      : `Jurisdiction: Texas (county not set — ask her which county her case is in when local practice matters).`
+  );
   lines.push(
     `Totals: ${incidents.length} incidents, ${totalMessages.toLocaleString()} messages archived (${starredAll.length} flagged as significant), ${evidence.length} evidence items, ${financials.length} financial entries.`
   );
@@ -152,6 +164,23 @@ export async function buildCaseSnapshot(): Promise<string> {
     for (const m of starred) {
       lines.push(
         `- ${m.date} | ${m.sender}${m.tags.length ? ` | [${m.tags.join(", ")}]` : ""}: "${trunc(m.text, 240)}"`
+      );
+    }
+  }
+
+  if (violations.length) {
+    lines.push(
+      `\nCOURT ORDER VIOLATIONS (${violations.length} logged — the basis of any enforcement motion):`
+    );
+    for (const v of violations) {
+      lines.push(
+        `- ${v.date}${v.time ? " " + v.time : ""} | ${v.type}${
+          v.orderName ? ` | order: ${v.orderName}` : ""
+        }${v.provision ? ` | provision: ${v.provision}` : ""}${
+          v.childPresent ? " | child involved" : ""
+        }${v.witnesses ? ` | witness: ${v.witnesses}` : ""}${
+          v.proof ? ` | proof: ${v.proof}` : ""
+        }${v.reported ? ` | reported: ${v.reported}` : ""}: ${trunc(v.description, 240)}`
       );
     }
   }

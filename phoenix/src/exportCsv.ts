@@ -183,6 +183,43 @@ export async function exportEvidenceFilesZip(
   return withFiles.length;
 }
 
+export async function exportViolationsCsv(): Promise<void> {
+  const violations = await db.violations.orderBy("date").toArray();
+  const rows: any[][] = [
+    [
+      "Entry #",
+      "Date",
+      "Time",
+      "Violation",
+      "Order violated",
+      "Provision",
+      "What happened",
+      "Child involved",
+      "Witnesses",
+      "Proof / where original is",
+      "Reported to",
+      "Logged on",
+    ],
+  ];
+  violations.forEach((v, idx) => {
+    rows.push([
+      `V-${String(idx + 1).padStart(3, "0")}`,
+      v.date,
+      v.time || "",
+      v.type,
+      v.orderName || "",
+      v.provision || "",
+      v.description,
+      v.childPresent ? "yes" : "no",
+      v.witnesses || "",
+      v.proof || "",
+      v.reported || "",
+      new Date(v.createdAt).toISOString(),
+    ]);
+  });
+  downloadText(`order-violations-${stamp()}.csv`, toCsv(rows));
+}
+
 export async function exportDatesCsv(): Promise<void> {
   const dates = await db.dates.orderBy("date").toArray();
   const rows: any[][] = [["Date", "Time", "Event", "Type", "Location", "Notes"]];
