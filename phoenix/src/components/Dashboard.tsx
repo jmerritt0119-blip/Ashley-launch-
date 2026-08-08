@@ -9,15 +9,25 @@ interface Props {
 export default function Dashboard({ go, displayName }: Props) {
   const counts = useLiveQuery(async () => {
     const today = new Date().toISOString().slice(0, 10);
-    const [incidents, messages, starred, evidence, financials, nextDates] = await Promise.all([
-      db.incidents.count(),
-      db.messages.count(),
-      db.messages.filter((m) => m.starred).count(),
-      db.evidence.count(),
-      db.financials.count(),
-      db.dates.where("date").aboveOrEqual(today).sortBy("date"),
-    ]);
-    return { incidents, messages, starred, evidence, financials, next: nextDates[0] ?? null };
+    const [incidents, messages, starred, evidence, financials, nextDates, lastBackup] =
+      await Promise.all([
+        db.incidents.count(),
+        db.messages.count(),
+        db.messages.filter((m) => m.starred).count(),
+        db.evidence.count(),
+        db.financials.count(),
+        db.dates.where("date").aboveOrEqual(today).sortBy("date"),
+        db.kv.get("lastBackupAt"),
+      ]);
+    return {
+      incidents,
+      messages,
+      starred,
+      evidence,
+      financials,
+      next: nextDates[0] ?? null,
+      lastBackupAt: (lastBackup?.value as number | undefined) ?? null,
+    };
   });
 
   const empty =
@@ -40,6 +50,20 @@ export default function Dashboard({ go, displayName }: Props) {
           {counts.next.type}). Tap to review and prep.
         </div>
       )}
+
+      {counts &&
+        counts.incidents + counts.messages + counts.evidence > 0 &&
+        (!counts.lastBackupAt || Date.now() - counts.lastBackupAt > 7 * 86400000) && (
+          <div className="notice" style={{ cursor: "pointer" }} onClick={() => go("settings")}>
+            <strong>Protect the record.</strong> Your entries live only on this device —{" "}
+            {counts.lastBackupAt
+              ? `your last encrypted backup was ${Math.round(
+                  (Date.now() - counts.lastBackupAt) / 86400000
+                )} days ago.`
+              : "no encrypted backup exists yet."}{" "}
+            Tap to export one now (takes a minute).
+          </div>
+        )}
 
       <div className="stat-grid">
         <div className="stat" onClick={() => go("incidents")}>
