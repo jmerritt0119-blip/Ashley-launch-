@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { db, findDuplicateMessages } from "../db";
+<<<<<<< HEAD
 import { dismissRepairNotice, lastRepair, type RepairReport } from "../autoRepair";
+=======
+>>>>>>> origin/main
 import {
   canPromptInstall,
   ensurePersistence,
@@ -36,7 +39,10 @@ export default function DataSafety({ compact = false }: { compact?: boolean }) {
   const [note, setNote] = useState<string | null>(null);
   const [showIos, setShowIos] = useState(false);
   const [dups, setDups] = useState<{ groups: number; removable: number[] } | null>(null);
+<<<<<<< HEAD
   const [repair, setRepair] = useState<RepairReport | null>(null);
+=======
+>>>>>>> origin/main
 
   const scanForDuplicates = async () => {
     setBusy("dups");
