@@ -104,6 +104,38 @@ export interface KeyDate {
   createdAt: number;
 }
 
+export const VIOLATION_TYPES = [
+  "missed the exchange entirely",
+  "late to exchange",
+  "kept the child beyond his time",
+  "returned the child early / refused possession",
+  "contact with me that the order prohibits",
+  "came to a place the order bars him from",
+  "third party used to contact me",
+  "didn't pay support",
+  "unapproved person around the child",
+  "alcohol or drugs during possession",
+  "school / medical / records violation",
+  "disparaging me to the child",
+  "other order violation",
+] as const;
+
+/** A single breach of a court order — the raw material of an enforcement motion. */
+export interface Violation {
+  id?: number;
+  date: string; // YYYY-MM-DD
+  time?: string;
+  type: string;
+  orderName?: string; // which order was violated
+  provision?: string; // the paragraph it breaks, if known
+  description: string;
+  childPresent: boolean;
+  witnesses?: string;
+  proof?: string; // where the proof lives (screenshot, camera, doorman)
+  reported?: string; // police report #, attorney notified, etc.
+  createdAt: number;
+}
+
 export interface Doc {
   id?: number;
   title: string;
@@ -126,6 +158,7 @@ class PhoenixDB extends Dexie {
   chat!: Table<ChatMsg, number>;
   dates!: Table<KeyDate, number>;
   documents!: Table<Doc, number>;
+  violations!: Table<Violation, number>;
   kv!: Table<KvRow, string>;
 
   constructor() {
@@ -144,6 +177,9 @@ class PhoenixDB extends Dexie {
       documents: "++id, updatedAt, createdAt",
       kv: "&key",
     });
+    this.version(4).stores({
+      violations: "++id, date, type, createdAt",
+    });
   }
 }
 
@@ -155,8 +191,12 @@ export async function wipeAllData(): Promise<void> {
   sessionStorage.clear();
 }
 
-export async function exportAllData() {
-  const [incidents, messages, evidence, financials, chat, dates, documents, kv] =
+/**
+ * @param includeFiles when false, evidence photos/videos are described but
+ *   their bytes are left out — keeps the cloud vault small enough to sync.
+ */
+export async function exportAllData(includeFiles = true) {
+  const [incidents, messages, evidence, financials, chat, dates, documents, violations, kv] =
     await Promise.all([
       db.incidents.toArray(),
       db.messages.toArray(),
@@ -165,17 +205,18 @@ export async function exportAllData() {
       db.chat.toArray(),
       db.dates.toArray(),
       db.documents.toArray(),
+      db.violations.toArray(),
       db.kv.toArray(),
     ]);
 
   const evidenceSerialized = await Promise.all(
     evidence.map(async (e) => {
       let fileData: string | undefined;
-      if (e.blob) {
+      if (e.blob && includeFiles) {
         fileData = await blobToBase64(e.blob);
       }
       const { blob, ...rest } = e;
-      return { ...rest, fileData };
+      return { ...rest, fileData, fileOmitted: !!e.blob && !includeFiles };
     })
   );
 
@@ -190,6 +231,7 @@ export async function exportAllData() {
     chat,
     dates,
     documents,
+    violations,
     kv,
   };
 }
@@ -206,7 +248,17 @@ export async function importAllData(data: any): Promise<void> {
   });
   await db.transaction(
     "rw",
-    [db.incidents, db.messages, db.evidence, db.financials, db.chat, db.dates, db.documents, db.kv],
+    [
+      db.incidents,
+      db.messages,
+      db.evidence,
+      db.financials,
+      db.chat,
+      db.dates,
+      db.documents,
+      db.violations,
+      db.kv,
+    ],
     async () => {
       if (data.incidents?.length) await db.incidents.bulkAdd(stripIds(data.incidents));
       if (data.messages?.length) await db.messages.bulkAdd(stripIds(data.messages));
@@ -215,6 +267,7 @@ export async function importAllData(data: any): Promise<void> {
       if (data.chat?.length) await db.chat.bulkAdd(stripIds(data.chat));
       if (data.dates?.length) await db.dates.bulkAdd(stripIds(data.dates));
       if (data.documents?.length) await db.documents.bulkAdd(stripIds(data.documents));
+      if (data.violations?.length) await db.violations.bulkAdd(stripIds(data.violations));
       if (data.kv?.length) await db.kv.bulkPut(data.kv);
     }
   );

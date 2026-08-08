@@ -8,9 +8,11 @@ export default function SafetyNotice({ onAcknowledge }: Props) {
       <div className="modal">
         <h2>Before you begin — a word about safety</h2>
         <p className="muted">
-          Phoenix keeps everything you record <strong>on this device only</strong>. Nothing is
-          uploaded to a server unless you use the AI Advocate, which sends only what you choose to
-          share.
+          Phoenix keeps everything you record <strong>on this device</strong>. Two things leave it,
+          both only when you choose: what you send to the AI Advocate when you ask it something,
+          and — if you switch on the cloud vault to use your case on another device or share it
+          with your attorney — a copy that is <strong>scrambled on this phone first</strong>, so
+          the vault holds data nobody can read without your passphrase.
         </p>
         <div className="notice">
           <strong>If someone may be monitoring this device, stop.</strong> Abusers sometimes install

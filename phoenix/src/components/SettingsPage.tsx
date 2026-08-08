@@ -4,6 +4,7 @@ import { db, exportAllData, importAllData, wipeAllData } from "../db";
 import { decryptJson, encryptJson, hashPin, randomSaltHex } from "../crypto";
 import { MODEL_OPTIONS, type Settings } from "../settings";
 import { biometricsSupported, enrollBiometric } from "../webauthn";
+import { makeVaultCode, normalizeVaultCode, pullVault, pushVault } from "../sync";
 
 interface Props {
   settings: Settings;
@@ -17,6 +18,49 @@ export default function SettingsPage({ settings, update }: Props) {
   const [status, setStatus] = useState("");
   const [bioAvailable, setBioAvailable] = useState(false);
   const lastBackup = useLiveQuery(() => db.kv.get("lastBackupAt"), []);
+
+  // ---- Cloud vault ----
+  const [vaultPass, setVaultPass] = useState("");
+  const [joinCode, setJoinCode] = useState("");
+  const [vaultBusy, setVaultBusy] = useState(false);
+  const [vaultMsg, setVaultMsg] = useState<string | null>(null);
+  const vaultSaved = useLiveQuery(() => db.kv.get("vaultSavedAt"), []);
+
+  const turnOnVault = async () => {
+    if (vaultPass.length < 8) {
+      return setVaultMsg("Pick a passphrase of at least 8 characters first — it's the only key.");
+    }
+    const code = settings.vaultCode || makeVaultCode();
+    setVaultBusy(true);
+    setVaultMsg("Encrypting everything on this device…");
+    try {
+      const savedAt = await pushVault(code, vaultPass, settings.vaultIncludeFiles);
+      update({ vaultCode: code });
+      await db.kv.put({ key: "vaultSavedAt", value: savedAt });
+      setVaultMsg("Saved to your vault. Your code is below — that plus the passphrase opens it anywhere.");
+    } catch (e: any) {
+      setVaultMsg(e?.message || "Couldn't save to the vault.");
+    } finally {
+      setVaultBusy(false);
+    }
+  };
+
+  const restoreVault = async () => {
+    const code = normalizeVaultCode(joinCode || settings.vaultCode || "");
+    if (!code) return setVaultMsg("Enter the vault code from the other device.");
+    if (!vaultPass) return setVaultMsg("Enter the passphrase for that vault.");
+    setVaultBusy(true);
+    setVaultMsg("Opening the vault…");
+    try {
+      await pullVault(code, vaultPass);
+      update({ vaultCode: code });
+      setVaultMsg("Everything is here. Your records loaded onto this device.");
+    } catch (e: any) {
+      setVaultMsg(e?.message || "Couldn't open the vault.");
+    } finally {
+      setVaultBusy(false);
+    }
+  };
 
   useEffect(() => {
     void biometricsSupported().then(setBioAvailable);
@@ -90,6 +134,14 @@ export default function SettingsPage({ settings, update }: Props) {
           <label className="field">
             <span>Your first name (used in greetings and the packet — optional)</span>
             <input value={settings.displayName} onChange={(e) => update({ displayName: e.target.value })} />
+          </label>
+          <label className="field">
+            <span>Your Texas county (so answers use your court's rules)</span>
+            <input
+              placeholder="e.g. Harris, Tarrant, Bexar"
+              value={settings.county}
+              onChange={(e) => update({ county: e.target.value })}
+            />
           </label>
           <label className="field">
             <span>Theme</span>
@@ -220,6 +272,110 @@ export default function SettingsPage({ settings, update }: Props) {
             cite your actual entries)
           </span>
         </label>
+      </div>
+
+      <div className="panel">
+        <h2>Your case on every device — and sharing it</h2>
+        <p className="muted small" style={{ marginTop: 0 }}>
+          Turn this on and your case is saved to a private vault you can open on your phone, your
+          laptop, or a new phone if this one is lost — and that you can hand to your attorney. It's
+          locked before it leaves this device: the vault holds scrambled data only, and nobody
+          without your passphrase can read it. Not us, not the company that stores it, not him.
+        </p>
+
+        <label className="field">
+          <span>Vault passphrase — the only key. Write it down somewhere safe he can't reach.</span>
+          <input
+            type="password"
+            placeholder="a phrase you'll remember, 8+ characters"
+            value={vaultPass}
+            onChange={(e) => setVaultPass(e.target.value)}
+          />
+        </label>
+        <label className="field" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <input
+            type="checkbox"
+            checked={settings.vaultIncludeFiles}
+            onChange={(e) => update({ vaultIncludeFiles: e.target.checked })}
+            style={{ width: "auto" }}
+          />
+          <span style={{ margin: 0 }}>
+            Include photo and video files (slower — turn off if syncing takes too long)
+          </span>
+        </label>
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="btn" disabled={vaultBusy} onClick={() => void turnOnVault()}>
+            {settings.vaultCode ? "Save my case to the vault now" : "Turn on the vault"}
+          </button>
+          <button className="btn secondary" disabled={vaultBusy} onClick={() => void restoreVault()}>
+            Load my case onto this device
+          </button>
+        </div>
+
+        {settings.vaultCode && (
+          <div className="notice calm" style={{ marginTop: 12 }}>
+            <div className="small" style={{ fontWeight: 700, marginBottom: 4 }}>
+              Your vault code
+            </div>
+            <div
+              style={{
+                fontFamily: "ui-monospace, monospace",
+                fontSize: 20,
+                letterSpacing: 1,
+                fontWeight: 700,
+              }}
+            >
+              {settings.vaultCode}
+            </div>
+            <p className="small" style={{ margin: "8px 0 0" }}>
+              To open your case somewhere else — your laptop, a new phone, or your attorney's
+              office — go to the same website there, open Settings, enter this code and your
+              passphrase, and tap "Load my case onto this device."
+            </p>
+            <p className="small muted" style={{ margin: "6px 0 0" }}>
+              Anyone with both the code and the passphrase can read everything, so send them
+              separately (code by email, passphrase by phone) and only to people you choose.
+              {vaultSaved?.value
+                ? ` Last saved to the vault: ${new Date(vaultSaved.value).toLocaleString()}.`
+                : ""}
+            </p>
+            <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+              <button
+                className="btn ghost sm"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(settings.vaultCode);
+                  setVaultMsg("Vault code copied.");
+                }}
+              >
+                Copy code
+              </button>
+              <button
+                className="btn ghost sm"
+                onClick={() => {
+                  if (confirm("Stop using this vault on this device? Your records here are untouched.")) {
+                    update({ vaultCode: "" });
+                    setVaultMsg("Vault disconnected from this device.");
+                  }
+                }}
+              >
+                Disconnect
+              </button>
+            </div>
+          </div>
+        )}
+
+        <label className="field" style={{ marginTop: 12 }}>
+          <span>Opening a vault made on another device? Enter its code here first.</span>
+          <input
+            placeholder="ABCD-EFGH-JKLM-NPQR"
+            value={joinCode}
+            onChange={(e) => setJoinCode(e.target.value)}
+            onBlur={(e) => setJoinCode(normalizeVaultCode(e.target.value))}
+          />
+        </label>
+
+        {vaultMsg && <div className="notice calm">{vaultMsg}</div>}
       </div>
 
       <div className="panel">
