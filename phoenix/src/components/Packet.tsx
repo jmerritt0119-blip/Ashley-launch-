@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../db";
 import {
   exportDatesCsv,
   exportEvidenceCsv,
+  exportEvidenceFilesZip,
   exportFinancialsCsv,
   exportIncidentsCsv,
   exportMessagesCsv,
@@ -13,6 +15,24 @@ interface Props {
 }
 
 export default function Packet({ displayName }: Props) {
+  const [zipStatus, setZipStatus] = useState<string | null>(null);
+
+  const downloadEvidenceFiles = async () => {
+    try {
+      setZipStatus("Packaging your evidence…");
+      const n = await exportEvidenceFilesZip((done, total) =>
+        setZipStatus(`Packaging ${Math.min(done + 1, total)} of ${total}…`)
+      );
+      setZipStatus(
+        n === 0
+          ? "No files are stored in the vault yet — only indexed entries."
+          : `${n} file${n === 1 ? "" : "s"} packaged. The .zip is in your Files app (Downloads) — share it from there.`
+      );
+    } catch (e: any) {
+      setZipStatus(e?.message || "Couldn't build the zip. Try again.");
+    }
+  };
+
   const data = useLiveQuery(async () => {
     const [incidents, starred, evidence, financials] = await Promise.all([
       db.incidents.orderBy("date").toArray(),
@@ -63,9 +83,21 @@ export default function Packet({ displayName }: Props) {
               ⬇ Key dates (.csv)
             </button>
           </div>
-          <p className="muted small" style={{ margin: 0 }}>
-            Evidence files themselves download individually from the Evidence vault; a complete
-            encrypted backup of everything lives in Settings.
+          <hr className="hr" />
+          <h2>Evidence files (photos, videos, recordings)</h2>
+          <p className="muted small">
+            One .zip containing every file in your vault, each named with the exhibit number used
+            above (E-001, E-002…), plus an index of what each one shows. Send unencrypted — your
+            attorney has to be able to open it — then delete it from your Files app afterward if
+            anyone else can reach your phone.
+          </p>
+          <button className="btn secondary" onClick={() => void downloadEvidenceFiles()}>
+            ⬇ All evidence files (.zip)
+          </button>
+          {zipStatus && <div className="notice calm" style={{ marginTop: 10 }}>{zipStatus}</div>}
+          <p className="muted small" style={{ marginTop: 10, marginBottom: 0 }}>
+            The complete encrypted backup in Settings is for you, not for counsel — only your
+            passphrase opens it.
           </p>
         </div>
         <hr className="hr" />
