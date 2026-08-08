@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { exportAllData, importAllData, wipeAllData } from "../db";
+import { useLiveQuery } from "dexie-react-hooks";
+import { db, exportAllData, importAllData, wipeAllData } from "../db";
 import { decryptJson, encryptJson, hashPin, randomSaltHex } from "../crypto";
 import { MODEL_OPTIONS, type Settings } from "../settings";
 import { biometricsSupported, enrollBiometric } from "../webauthn";
@@ -15,6 +16,7 @@ export default function SettingsPage({ settings, update }: Props) {
   const [passphrase, setPassphrase] = useState("");
   const [status, setStatus] = useState("");
   const [bioAvailable, setBioAvailable] = useState(false);
+  const lastBackup = useLiveQuery(() => db.kv.get("lastBackupAt"), []);
 
   useEffect(() => {
     void biometricsSupported().then(setBioAvailable);
@@ -53,6 +55,7 @@ export default function SettingsPage({ settings, update }: Props) {
     a.download = `phoenix-backup-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
+    await db.kv.put({ key: "lastBackupAt", value: Date.now() });
     setStatus("Encrypted backup downloaded. Store it somewhere he cannot access.");
   };
 
@@ -225,6 +228,13 @@ export default function SettingsPage({ settings, update }: Props) {
           Everything lives only in this browser. If this device is lost — or its storage cleared —
           the records go with it. Export an encrypted backup regularly and keep it somewhere he
           cannot reach (a private cloud drive, or with someone you trust).
+        </p>
+        <p className="small" style={{ fontWeight: 700 }}>
+          Last backup:{" "}
+          {lastBackup?.value
+            ? new Date(lastBackup.value).toLocaleDateString() +
+              ` (${Math.max(0, Math.round((Date.now() - lastBackup.value) / 86400000))} days ago)`
+            : "never"}
         </p>
         <label className="field">
           <span>Backup passphrase (needed again to restore — don't lose it)</span>

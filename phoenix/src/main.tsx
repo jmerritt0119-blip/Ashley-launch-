@@ -15,3 +15,9 @@ if ("serviceWorker" in navigator && import.meta.env.PROD) {
     navigator.serviceWorker.register("/sw.js").catch(() => {});
   });
 }
+
+// Ask the browser to protect this site's storage from automatic eviction —
+// her records must survive storage-pressure cleanup.
+if (navigator.storage?.persist) {
+  navigator.storage.persist().catch(() => {});
+}
