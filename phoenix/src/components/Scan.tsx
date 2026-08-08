@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { db } from "../db";
+import { addMessagesDeduped, db } from "../db";
 import { streamAdvocate } from "../claude";
 import { handoff } from "../handoff";
 import {
@@ -55,6 +55,7 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
   const [remaining, setRemaining] = useState<number[]>([]);
   const [loadedNote, setLoadedNote] = useState<string | null>(null);
   const [archived, setArchived] = useState<number>(0);
+  const [dupNote, setDupNote] = useState<string | null>(null);
   const [senders, setSenders] = useState<{ name: string; count: number }[]>([]);
   const docRef = useRef<string>("");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -105,7 +106,8 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     void sha256Hex(doc).then((sha256) =>
       recordImport({ kind: "message export", rows: rows.length, bytes: doc.length, sha256 })
     );
-    await db.messages.bulkAdd(
+    // Re-uploading the same export must not double the archive.
+    const { added, skipped } = await addMessagesDeduped(
       rows.map((m) => ({
         date: m.date,
         time: m.time || undefined,
@@ -117,7 +119,12 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
         createdAt: now,
       }))
     );
-    setArchived(rows.length);
+    setArchived(added);
+    setDupNote(
+      skipped
+        ? `${skipped.toLocaleString()} of these were already in your archive and were not added again.`
+        : null
+    );
 
     // Who is in this thread? A phone-number-only export gives no clue which
     // side is his, and his words are the ones that carry weight in court.
@@ -481,6 +488,13 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
             single one — saved exactly as written, by the app itself, before the AI read anything.
             They're searchable now and they're in your attorney export. The AI is reading them to
             flag the ones that matter.
+          </div>
+        )}
+
+        {dupNote && (
+          <div className="notice calm" style={{ marginTop: 10 }}>
+            {dupNote} Uploading the same export again is safe — it never duplicates your archive,
+            and it costs nothing extra to do.
           </div>
         )}
 

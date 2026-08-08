@@ -19,6 +19,7 @@
 // office knowing where she stands.
 
 import { db, type Incident, type Msg, type Violation } from "./db";
+import { refInc, refMsg, refVio, REF_KEY } from "./refs";
 
 export interface Finding {
   key: string;
@@ -248,7 +249,7 @@ export async function buildAffidavit(name: string, county: string): Promise<stri
       i.policeReport ? `Police report ${i.policeReport}` : "",
       i.medical ? `Medical: ${i.medical}` : "",
     ].filter(Boolean);
-    lines.push(`${n}. On ${i.date}${i.time ? `, ${extras[0]}` : ""}, ${i.title}.`);
+    lines.push(`${n}. On ${i.date}${i.time ? `, ${extras[0]}` : ""}, ${i.title}.  [${refInc(i.id)}]`);
     lines.push(`   ${i.narrative.replace(/\n+/g, "\n   ")}`);
     if (extras.length) lines.push(`   [${extras.join(". ")}.]`);
     lines.push("");
@@ -259,7 +260,7 @@ export async function buildAffidavit(name: string, county: string): Promise<stri
     lines.push(`${n}. He sent me the following messages. These are quoted exactly as received:`);
     lines.push("");
     for (const m of flagged.slice(0, 60)) {
-      lines.push(`   ${m.date} — "${m.text.replace(/\n+/g, " ")}"`);
+      lines.push(`   [${refMsg(m.id)}] ${m.date}${m.time ? ` ${m.time}` : ""} — "${m.text.replace(/\n+/g, " ")}"`);
     }
     if (flagged.length > 60) {
       lines.push(`   [and ${flagged.length - 60} further messages, in the exported archive]`);
@@ -273,7 +274,7 @@ export async function buildAffidavit(name: string, county: string): Promise<stri
     lines.push("");
     for (const v of violations) {
       lines.push(
-        `   ${v.date} — ${v.type}. ${v.description}${v.reported ? ` Reported: ${v.reported}.` : ""}`
+        `   [${refVio(v.id)}] ${v.date} — ${v.type}. ${v.description}${v.reported ? ` Reported: ${v.reported}.` : ""}`
       );
     }
     lines.push("");
@@ -284,11 +285,20 @@ export async function buildAffidavit(name: string, county: string): Promise<stri
   lines.push("");
   lines.push("---");
   lines.push(
-    "Every factual paragraph above came from an entry in my own records. The evidence"
+    "Every factual paragraph above came from an entry in my own records, and carries"
   );
   lines.push(
-    "integrity record shows when each file and message export entered those records."
+    "the reference number of the record it came from. Those records are in the"
   );
+  lines.push(
+    "complete case export, where each reference can be looked up and read in full."
+  );
+  lines.push(
+    "The evidence integrity record shows when each file and message export entered"
+  );
+  lines.push("those records, and its SHA-256 fingerprint at that moment.");
+  lines.push("");
+  lines.push(REF_KEY);
 
   return lines.join("\n");
 }

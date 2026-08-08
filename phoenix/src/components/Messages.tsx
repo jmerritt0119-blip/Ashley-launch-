@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { db, MESSAGE_TAGS, type Msg } from "../db";
+import { addMessagesDeduped, db, MESSAGE_TAGS, type Msg } from "../db";
 import { messagesFromCsv, messagesFromText } from "../parseMessages";
 import { ocrImages } from "../ocr";
 import { useDraft } from "../useDraft";
 import { searchMessages } from "../messageIndex";
 import { usePaneActive } from "../paneContext";
+import { refMsg } from "../refs";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -89,7 +90,7 @@ export default function Messages() {
   const commitImport = async (source: string) => {
     if (!preview || preview.length === 0) return;
     const now = Date.now();
-    await db.messages.bulkAdd(
+    const { added, skipped } = await addMessagesDeduped(
       preview.map((p) => ({
         date: p.date,
         time: p.time || undefined,
@@ -100,6 +101,11 @@ export default function Messages() {
         starred: false,
         createdAt: now,
       }))
+    );
+    setSaveError(
+      skipped
+        ? `Added ${added.toLocaleString()}. ${skipped.toLocaleString()} were already in your archive, so they weren't added twice.`
+        : null
     );
     setPreview(null);
     setPasteText("");
@@ -329,7 +335,13 @@ export default function Messages() {
             <button className="star-btn" title="Star as significant" onClick={() => toggleStar(m)}>
               {m.starred ? "★" : "☆"}
             </button>
-            <span className="date">{m.date}</span>
+            <span className="tag" title="Quote this number to your attorney — it never changes">
+              {refMsg(m.id)}
+            </span>
+            <span className="date">
+              {m.date}
+              {m.time ? ` ${m.time}` : ""}
+            </span>
             <span className="title">{m.sender}</span>
             {savedId === m.id && (
               <span className="small" style={{ color: "var(--good, #2e7d32)", fontWeight: 700 }}>

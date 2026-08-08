@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { db, findDuplicateMessages } from "../db";
 import {
   canPromptInstall,
   ensurePersistence,
@@ -33,6 +34,41 @@ export default function DataSafety({ compact = false }: { compact?: boolean }) {
   const [busy, setBusy] = useState("");
   const [note, setNote] = useState<string | null>(null);
   const [showIos, setShowIos] = useState(false);
+  const [dups, setDups] = useState<{ groups: number; removable: number[] } | null>(null);
+
+  const scanForDuplicates = async () => {
+    setBusy("dups");
+    const found = await findDuplicateMessages();
+    setDups({ groups: found.groups, removable: found.removable });
+    setNote(
+      found.groups === 0
+        ? "No duplicates — every message in your archive is there once."
+        : `Found ${found.removable.length.toLocaleString()} duplicate copies across ${found.groups.toLocaleString()} messages. Nothing has been removed; the button below does that.`
+    );
+    setBusy("");
+  };
+
+  const removeDuplicates = async () => {
+    if (!dups?.removable.length) return;
+    if (
+      !confirm(
+        `Remove ${dups.removable.length.toLocaleString()} duplicate copies?\n\n` +
+          "For each message that appears more than once, one copy is kept — the copy carrying " +
+          "your stars and tags, if any. No message is lost: every distinct message stays.\n\n" +
+          "A restore point is saved first, so this is reversible."
+      )
+    )
+      return;
+    setBusy("dups");
+    await takeSnapshot("before removing duplicate messages");
+    await db.messages.bulkDelete(dups.removable);
+    setNote(
+      `Removed ${dups.removable.length.toLocaleString()} duplicate copies. Every distinct message is still here, and a restore point was saved first.`
+    );
+    setDups(null);
+    await refresh();
+    setBusy("");
+  };
 
   const refresh = useCallback(async () => {
     setReport(await storageReport());
@@ -150,6 +186,14 @@ export default function DataSafety({ compact = false }: { compact?: boolean }) {
         <button className="btn secondary" onClick={() => void backupNow()} disabled={busy === "snap"}>
           {busy === "snap" ? "Saving…" : "Make a restore point now"}
         </button>
+        <button className="btn secondary" onClick={() => void scanForDuplicates()} disabled={busy === "dups"}>
+          {busy === "dups" ? "Checking…" : "Check for duplicate messages"}
+        </button>
+        {!!dups?.removable.length && (
+          <button className="btn" onClick={() => void removeDuplicates()} disabled={busy === "dups"}>
+            Remove {dups.removable.length.toLocaleString()} duplicates
+          </button>
+        )}
       </div>
 
       {showIos && (
