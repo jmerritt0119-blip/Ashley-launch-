@@ -42,6 +42,26 @@ jobs:
         with:
           node-version: 22
 
+      # Stamp the exact commit into the app so the check below can prove the
+      # browser is being served THIS build. Overwrites a tracked source file in
+      # the runner's checkout only — nothing is committed.
+      - name: Stamp the build with its commit
+        run: |
+          set -e
+          F=phoenix/src/buildStamp.ts
+          # Replace the two values in place. Rewriting the whole file would drop
+          # buildLabel() and the side effect that keeps the commit in the bundle,
+          # and the build would fail on the missing import.
+          sed -i \
+            -e "s|^export const BUILD_SHA: string = .*|export const BUILD_SHA: string = \"$GITHUB_SHA\";|" \
+            -e "s|^export const BUILD_TIME: string = .*|export const BUILD_TIME: string = \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\";|" \
+            "$F"
+          grep -n '^export const BUILD_' "$F"
+          if ! grep -qF "$GITHUB_SHA" "$F"; then
+            echo "::error::Could not stamp the commit into $F — its shape changed."
+            exit 1
+          fi
+
       - name: Upload source to Netlify build system
         working-directory: phoenix
         run: |
@@ -60,6 +80,24 @@ jobs:
             exit 1
           fi
           echo "✓ Phoenix markup present"
+
+          # "Phoenix" lives in index.html, which is identical in every version —
+          # matching it proves the site answers, not that the fix arrived. The
+          # commit stamp is compiled into the JavaScript, so finding it in the
+          # live bundle is proof that what she loads is what was just built.
+          # Netlify can serve a cached build; silence there would look like success.
+          echo "--- checking the live JavaScript carries $GITHUB_SHA ---"
+          stamped=""
+          for asset in $(grep -oE '/assets/[A-Za-z0-9._-]+\.js' /tmp/page.html | sort -u); do
+            curl -s -m 30 "$URL$asset" -o /tmp/chunk.js || continue
+            echo "  $asset ($(wc -c < /tmp/chunk.js) bytes)"
+            if grep -qF "$GITHUB_SHA" /tmp/chunk.js; then stamped="$asset"; break; fi
+          done
+          if [ -z "$stamped" ]; then
+            echo "::error::The live site is serving an older build — commit $GITHUB_SHA is not in the JavaScript it returns. The deploy reported success but her browser would not get these changes."
+            exit 1
+          fi
+          echo "✓ live bundle is commit $GITHUB_SHA (in $stamped)"
           acode=$(curl -s -o /tmp/api.out -w '%{http_code}' -m 45 -X POST \
             -H 'content-type: application/json' \
             --data '{"messages":[{"role":"user","content":"Say OK briefly."}]}' \
@@ -190,6 +228,22 @@ jobs:
         working-directory: phoenix
         run: npm ci || npm install
 
+      # Same stamp as the proxy path, so whichever route deploys, the running
+      # build can still be identified exactly.
+      - name: Stamp the build with its commit
+        run: |
+          set -e
+          F=phoenix/src/buildStamp.ts
+          sed -i \
+            -e "s|^export const BUILD_SHA: string = .*|export const BUILD_SHA: string = \"$GITHUB_SHA\";|" \
+            -e "s|^export const BUILD_TIME: string = .*|export const BUILD_TIME: string = \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\";|" \
+            "$F"
+          grep -n '^export const BUILD_' "$F"
+          if ! grep -qF "$GITHUB_SHA" "$F"; then
+            echo "::error::Could not stamp the commit into $F — its shape changed."
+            exit 1
+          fi
+
       - name: Build and deploy to production
         working-directory: phoenix
         run: |
@@ -210,6 +264,19 @@ jobs:
             exit 1
           fi
           echo "✓ Phoenix markup present"
+
+          # Prove the JavaScript she loads is the commit just built, not a cache.
+          stamped=""
+          for asset in $(grep -oE '/assets/[A-Za-z0-9._-]+\.js' /tmp/page.html | sort -u); do
+            curl -s -m 30 "$URL$asset" -o /tmp/chunk.js || continue
+            if grep -qF "$GITHUB_SHA" /tmp/chunk.js; then stamped="$asset"; break; fi
+          done
+          if [ -z "$stamped" ]; then
+            echo "::error::The live site is serving an older build — commit $GITHUB_SHA is not in the JavaScript it returns."
+            exit 1
+          fi
+          echo "✓ live bundle is commit $GITHUB_SHA (in $stamped)"
+
           acode=$(curl -s -o /tmp/api.out -w '%{http_code}' -m 30 -X POST \
             -H 'content-type: application/json' \
             --data '{"messages":[{"role":"user","content":"Say OK briefly."}]}' \
