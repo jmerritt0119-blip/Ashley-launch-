@@ -19,9 +19,17 @@ export interface ScanMessage {
   tags: string[];
 }
 
+export interface RiskIndicator {
+  type: string;
+  quote: string;
+  date: string;
+  why: string;
+}
+
 export interface ScanResult {
   incidents: ScanIncident[];
   messages: ScanMessage[];
+  risks: RiskIndicator[];
   summary: string;
 }
 
@@ -84,14 +92,85 @@ Respond with ONLY valid JSON — no markdown fences, no commentary before or aft
       "tags": ["one or more from the tag list"]
     }
   ],
-  "summary": "2-4 sentences naming the patterns found and roughly how often they appear"
+  "riskIndicators": [
+    {
+      "type": "one of: threat to kill, strangulation or choking, weapon access or reference, threat to take or harm the child, stalking or surveillance, threat of suicide as leverage, sexual coercion, escalation after separation, extreme jealousy or possessiveness, threat to have her deported or reported, threat to expose intimate images",
+      "quote": "the exact words from the document, verbatim",
+      "date": "YYYY-MM-DD or \\"\\"",
+      "why": "one sentence on why this matters for her safety"
+    }
+  ],
+  "summary": "3-6 sentences naming the patterns found, roughly how often they appear, and how they change over time"
 }
 
 Allowed categories: ${JSON.stringify(INCIDENT_CATEGORIES)}
 Allowed tags: ${JSON.stringify(MESSAGE_TAGS)}
 
+WHAT COUNTS AS ABUSE — hunt for all of it, not just the obvious
+Most of what proves a case like hers is NOT physical. Courts and custody
+evaluators respond to documented patterns of psychological and coercive abuse,
+and those are the easiest things to miss when skimming. Look for every one of:
+
+VERBAL — name-calling, insults, degradation, profanity aimed at her, screaming
+in writing (ALL CAPS tirades), mocking, contempt, sexual or body-based
+humiliation, calling her crazy/stupid/worthless/a bad mother, swearing at her
+in front of the child.
+
+PSYCHOLOGICAL AND EMOTIONAL — gaslighting (denying things she witnessed,
+insisting she is misremembering or imagining, "that never happened," "you're
+insane"); blame-shifting and DARVO (he offends, then denies, attacks her, and
+casts himself as the real victim); manufactured guilt; silent treatment and
+withdrawal as punishment; conditional affection; humiliation in front of others;
+telling her no one will believe her; telling her she is a bad mother or will
+lose the child; degrading her family; love-bombing and apology cycles that
+follow incidents; threats of self-harm or suicide used to control her.
+
+COERCIVE CONTROL — rules and conditions on her behavior; monitoring her phone,
+location, messages, spending, mileage, or social media; demanding passwords;
+interrogating her about where she was; controlling money, transport, food,
+sleep, clothing, medication or medical care; sabotaging her work, sleep or
+schooling; isolating her from family, friends or support; punishing her for
+contact with others; controlling access to documents, keys or the car.
+
+INTIMIDATION AND THREATS — threats of violence, veiled threats ("you'll be
+sorry", "remember what happened last time", "don't make me"), threats to take
+the child, threats to leave her with nothing, threats to report her to CPS,
+police, immigration or her employer, threats to expose private or intimate
+images, threats about lawyers and courts, punching walls, breaking things,
+harming or threatening pets, displaying or referencing weapons.
+
+FINANCIAL — withholding money, controlling all accounts, hiding or moving
+assets, running up debt in her name, refusing support, sabotaging her job,
+demanding receipts, making her ask for basics.
+
+CHILD-RELATED — anything involving the child: using her as messenger or spy,
+disparaging her mother to her, threatening custody, undermining school,
+medical or therapy, exposing her to violence, substance use during possession,
+missed or manipulated exchanges, refusing to return her.
+
+DIGITAL AND STALKING — tracking apps, spyware, GPS, fake or burner accounts,
+messaging through third parties or new numbers after being blocked, showing up
+uninvited, excessive calls or texts in bursts, monitoring through the child.
+
+SEXUAL — coercion, pressure, unwanted contact, reproductive control, sexual
+degradation, threats tied to sex.
+
+ADMISSIONS AND CORROBORATION — anything where he admits, minimizes,
+apologizes for, or explains away his own conduct ("I shouldn't have grabbed
+you", "I only did it because you..."). These are gold: in Texas his own
+statements come in against him as party-opponent statements, not hearsay.
+
 Rules:
-- Catalog: physical violence, threats and intimidation, coercive control, verbal/emotional abuse, financial abuse, stalking or monitoring, isolation, property damage, anything endangering or involving children, order violations, admissions of wrongdoing, and apology-after-abuse cycles.
+- Catalog every category above. Verbal and psychological abuse count as
+  incidents in their own right — do not skip a message because it "only" says
+  something cruel. A single degrading text is an entry.
+- Treat repetition as significant: if the same tactic appears many times, log
+  the clearest examples AND say in the summary how often it recurs and whether
+  it escalates over time or around events (court dates, her leaving, exchanges).
+- riskIndicators is a SAFETY list, separate from evidence. Strangulation or
+  choking, threats to kill, weapon access, threats toward the child, and
+  escalation after separation are the strongest predictors of serious harm —
+  surface them even if she has not framed them as important.
 - Extract only what is actually in the document. Quotes verbatim. No inference beyond what is written, no exaggeration — a conservative catalog survives cross-examination.
 - "incidents" are events; "flaggedMessages" are individual significant quotes/messages. An event described by a quote can appear in both.
 - Severity: 1 minor … 5 extreme/dangerous. Be conservative.
@@ -167,7 +246,16 @@ export function parseScanResult(raw: string): ScanResult {
     }))
     .filter((m: ScanMessage) => m.text);
 
-  return { incidents, messages, summary: String(obj.summary || "").slice(0, 2000) };
+  const risks: RiskIndicator[] = (Array.isArray(obj.riskIndicators) ? obj.riskIndicators : [])
+    .map((r: any) => ({
+      type: String(r?.type || "").slice(0, 120),
+      quote: String(r?.quote || "").slice(0, 1000),
+      date: r?.date ? normalizeDate(String(r.date)) : "",
+      why: String(r?.why || "").slice(0, 400),
+    }))
+    .filter((r: RiskIndicator) => r.type || r.quote);
+
+  return { incidents, messages, risks, summary: String(obj.summary || "").slice(0, 4000) };
 }
 
 const dateSort = <T extends { date: string }>(a: T, b: T) => {
@@ -181,8 +269,10 @@ const dateSort = <T extends { date: string }>(a: T, b: T) => {
 export function mergeScanResults(parts: ScanResult[]): ScanResult {
   const incidents: ScanIncident[] = [];
   const messages: ScanMessage[] = [];
+  const risks: RiskIndicator[] = [];
   const seenInc = new Set<string>();
   const seenMsg = new Set<string>();
+  const seenRisk = new Set<string>();
   const summaries: string[] = [];
   for (const p of parts) {
     for (const i of p.incidents) {
@@ -197,9 +287,16 @@ export function mergeScanResults(parts: ScanResult[]): ScanResult {
       seenMsg.add(k);
       messages.push(m);
     }
+    for (const r of p.risks || []) {
+      const k = `${r.type.toLowerCase()}|${r.quote.toLowerCase().slice(0, 100)}`;
+      if (seenRisk.has(k)) continue;
+      seenRisk.add(k);
+      risks.push(r);
+    }
     if (p.summary.trim()) summaries.push(p.summary.trim());
   }
   incidents.sort(dateSort);
   messages.sort(dateSort);
-  return { incidents, messages, summary: summaries.join("\n\n").slice(0, 8000) };
+  risks.sort(dateSort);
+  return { incidents, messages, risks, summary: summaries.join("\n\n").slice(0, 8000) };
 }

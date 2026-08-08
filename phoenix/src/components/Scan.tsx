@@ -488,6 +488,38 @@ export default function Scan({ settings, goSettings, update }: Props) {
 
       {result && (
         <>
+          {result.risks.length > 0 && (
+            <div className="panel" style={{ borderColor: "var(--danger)", borderWidth: 2 }}>
+              <h2 style={{ color: "var(--danger)" }}>
+                Read this first — {result.risks.length} safety warning
+                {result.risks.length === 1 ? "" : "s"} in these messages
+              </h2>
+              <p className="small">
+                These are the things that predict serious harm. They matter for your safety right
+                now, and they are also the strongest possible support for a Texas protective order.
+                Show these to your attorney, and to the court.
+              </p>
+              {result.risks.map((r, i) => (
+                <div className="item-card sev-5" key={i}>
+                  <div className="head">
+                    {r.date && <span className="date">{r.date}</span>}
+                    <span className="title">{r.type}</span>
+                  </div>
+                  {r.quote && (
+                    <p style={{ whiteSpace: "pre-wrap", margin: "6px 0", fontWeight: 600 }}>
+                      "{r.quote}"
+                    </p>
+                  )}
+                  {r.why && <p className="small muted" style={{ margin: 0 }}>{r.why}</p>}
+                </div>
+              ))}
+              <p className="small" style={{ fontWeight: 700, marginBottom: 0 }}>
+                If you are in danger right now: 911. Any hour: 1-800-799-7233, or text START to
+                88788. In Texas: Texas Advocacy Project 1-800-374-HOPE.
+              </p>
+            </div>
+          )}
+
           <div className="panel">
             <h2>What the scan found</h2>
             {result.summary && <p style={{ whiteSpace: "pre-wrap" }}>{result.summary}</p>}
