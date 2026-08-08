@@ -1,7 +1,16 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { db } from "../db";
 import { streamAdvocate } from "../claude";
-import { buildScanPrompt, parseScanResult, SCAN_INPUT_LIMIT, type ScanResult } from "../scan";
+import { handoff } from "../handoff";
+import {
+  buildScanPrompt,
+  chunkScanInput,
+  mergeScanResults,
+  parseScanResult,
+  SCAN_CHUNK_SIZE,
+  SCAN_MODEL,
+  type ScanResult,
+} from "../scan";
 import { ocrImages } from "../ocr";
 import type { Settings } from "../settings";
 
@@ -22,13 +31,31 @@ export default function Scan({ settings, goSettings }: Props) {
   const [pickedMsg, setPickedMsg] = useState<Set<number>>(new Set());
   const [fallbackDate, setFallbackDate] = useState(today());
   const [added, setAdded] = useState<string | null>(null);
+  const [remaining, setRemaining] = useState<number[]>([]);
+  const [loadedNote, setLoadedNote] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const shotRef = useRef<HTMLInputElement>(null);
+  const chunksRef = useRef<string[]>([]);
+  const partsRef = useRef<ScanResult[]>([]);
+  const abortRef = useRef<AbortController | null>(null);
 
   const needsKey = settings.connection === "direct" && !settings.apiKey;
+  const estParts = Math.max(1, Math.ceil(text.trim().length / SCAN_CHUNK_SIZE));
 
-  const onFile = async (f: File) => {
-    setText((await f.text()).slice(0, SCAN_INPUT_LIMIT));
+  const onFiles = async (files: File[]) => {
+    const texts: string[] = [];
+    for (const f of files) texts.push(await f.text());
+    const combined = [text.trim(), ...texts].filter(Boolean).join("\n\n");
+    if (combined.length > 300_000) {
+      // Giant upload: don't render it into the textarea — start scanning it.
+      setText("");
+      setLoadedNote(
+        `File loaded — ${combined.length.toLocaleString()} characters (kept out of the text box to stay fast).`
+      );
+      void run(false, combined);
+    } else {
+      setText(combined);
+    }
   };
 
   const onScreenshots = async (files: File[]) => {
@@ -46,38 +73,127 @@ export default function Scan({ settings, goSettings }: Props) {
     }
   };
 
-  const run = async () => {
-    const doc = text.trim();
-    if (!doc || busy) return;
+  const applyMerged = (merged: ScanResult) => {
+    setResult(merged);
+    setPickedInc(new Set(merged.incidents.map((_, i) => i)));
+    setPickedMsg(new Set(merged.messages.map((_, i) => i)));
+  };
+
+  // The home screen can hand a freshly uploaded file straight here — load it
+  // and start scanning immediately, so upload-to-catalog is one tap. Huge
+  // files stay out of the textarea (rendering millions of characters would
+  // lag a phone); the scan itself runs from memory either way.
+  useEffect(() => {
+    const t = handoff.scanText;
+    if (t && t.trim()) {
+      handoff.scanText = null;
+      if (t.length > 300_000) {
+        setLoadedNote(
+          `File loaded — ${t.length.toLocaleString()} characters (kept out of the text box to stay fast).`
+        );
+      } else {
+        setText(t);
+      }
+      void run(false, t);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const run = async (resume = false, docOverride?: string) => {
+    if (busy || needsKey) return;
+    let chunks: string[];
+    let indices: number[];
+    if (resume && chunksRef.current.length && remaining.length) {
+      chunks = chunksRef.current;
+      indices = [...remaining];
+    } else {
+      const doc = (docOverride ?? text).trim();
+      if (!doc) return;
+      chunks = chunkScanInput(doc);
+      chunksRef.current = chunks;
+      partsRef.current = [];
+      indices = chunks.map((_, i) => i);
+      setResult(null);
+    }
     setBusy(true);
     setError(null);
-    setResult(null);
     setAdded(null);
-    setProgress("The Advocate is reading the document…");
-    try {
-      let acc = "";
-      const full = await streamAdvocate({
-        connection: settings.connection,
-        apiKey: settings.apiKey,
-        model: settings.model,
-        history: [{ role: "user", content: buildScanPrompt(doc.slice(0, SCAN_INPUT_LIMIT)) }],
-        caseContext: null,
-        onDelta: (d) => {
-          acc += d;
-          setProgress(`Cataloging… (${acc.length.toLocaleString()} characters read)`);
-        },
-      });
-      const parsed = parseScanResult(full || acc);
-      setResult(parsed);
-      setPickedInc(new Set(parsed.incidents.map((_, i) => i)));
-      setPickedMsg(new Set(parsed.messages.map((_, i) => i)));
-    } catch (e: any) {
-      setError(e?.message || "The scan failed — try again, or scan a smaller portion.");
-    } finally {
-      setBusy(false);
-      setProgress("");
+    setRemaining([]);
+    const abort = new AbortController();
+    abortRef.current = abort;
+    const failed: number[] = [];
+    const parts = partsRef.current;
+
+    for (let n = 0; n < indices.length; n++) {
+      const idx = indices[n];
+      if (abort.signal.aborted) {
+        failed.push(...indices.slice(n));
+        break;
+      }
+      const label = chunks.length > 1 ? `part ${idx + 1} of ${chunks.length}` : "the document";
+      const found = mergeScanResults(parts);
+      const foundNote =
+        parts.length > 0
+          ? ` ${found.incidents.length} incidents & ${found.messages.length} messages found so far.`
+          : "";
+      setProgress(`The Advocate is reading ${label}…${foundNote}`);
+      let ok = false;
+      const backoff = [2000, 5000];
+      for (let attempt = 0; attempt < 3 && !ok; attempt++) {
+        try {
+          let acc = "";
+          const full = await streamAdvocate({
+            connection: settings.connection,
+            apiKey: settings.apiKey,
+            // Scans are pinned to Opus regardless of the chat model picker —
+            // cataloging must be as careful as the case deserves.
+            model: SCAN_MODEL,
+            history: [
+              {
+                role: "user",
+                content: buildScanPrompt(chunks[idx], { index: idx + 1, total: chunks.length }),
+              },
+            ],
+            caseContext: null,
+            signal: abort.signal,
+            onDelta: (d) => {
+              acc += d;
+              setProgress(`Cataloging ${label}… (${acc.length.toLocaleString()} characters)${foundNote}`);
+            },
+          });
+          parts.push(parseScanResult(full || acc));
+          ok = true;
+        } catch {
+          if (abort.signal.aborted) break;
+          if (attempt < 2) await new Promise((r) => setTimeout(r, backoff[attempt]));
+        }
+      }
+      if (!ok && !abort.signal.aborted) failed.push(idx);
+      if (parts.length) applyMerged(mergeScanResults(parts));
     }
+
+    setRemaining(failed);
+    if (abort.signal.aborted) {
+      setError(
+        failed.length
+          ? `Scan stopped — ${chunks.length - failed.length} of ${chunks.length} parts are cataloged below. Tap "Scan remaining parts" to finish anytime.`
+          : "Scan stopped."
+      );
+    } else if (failed.length) {
+      setError(
+        `${failed.length} of ${chunks.length} part${failed.length === 1 ? "" : "s"} (${failed
+          .map((i) => i + 1)
+          .join(", ")}) hit a connection error and ${
+          failed.length === 1 ? "was" : "were"
+        } skipped — everything else is cataloged below. Tap "Scan remaining parts" to finish.`
+      );
+    }
+    setBusy(false);
+    setProgress("");
+    abortRef.current = null;
   };
+
+  const stop = () => abortRef.current?.abort();
 
   const toggle = (set: Set<number>, i: number, save: (s: Set<number>) => void) => {
     const next = new Set(set);
@@ -129,15 +245,20 @@ export default function Scan({ settings, goSettings }: Props) {
     );
     setResult(null);
     setText("");
+    setRemaining([]);
+    setLoadedNote(null);
+    chunksRef.current = [];
+    partsRef.current = [];
   };
 
   return (
     <div>
-      <h1>Deep scan</h1>
+      <h1>Upload & deep scan</h1>
       <p className="muted">
         Dump an entire report — a full message export, a journal, emails, anything — and The
         Advocate will read all of it, find every instance of abuse, and catalog each one as a
-        dated, categorized entry. You review before anything is saved.
+        dated, categorized entry. There's no size limit: big documents are scanned in parts,
+        automatically. You review before anything is saved.
       </p>
 
       {needsKey && (
@@ -153,20 +274,37 @@ export default function Scan({ settings, goSettings }: Props) {
       <div className="panel">
         <textarea
           style={{ minHeight: 180 }}
-          placeholder="Paste the document here — or upload a file / screenshots below…"
+          placeholder="Paste the document here — the whole thing, any size — or upload files / screenshots below…"
           value={text}
-          onChange={(e) => setText(e.target.value.slice(0, SCAN_INPUT_LIMIT))}
+          onChange={(e) => setText(e.target.value)}
         />
+        {loadedNote && (
+          <p className="muted small" style={{ margin: "6px 0", fontWeight: 700 }}>
+            {loadedNote}
+          </p>
+        )}
         <p className="muted small" style={{ margin: "6px 0" }}>
-          {text.length.toLocaleString()} / {SCAN_INPUT_LIMIT.toLocaleString()} characters
-          {text.length >= SCAN_INPUT_LIMIT ? " — limit reached; scan this part, then paste the rest." : ""}
+          {text.trim().length.toLocaleString()} characters
+          {text.trim().length > SCAN_CHUNK_SIZE
+            ? ` — will scan in ${estParts} parts, automatically`
+            : " — no size limit; paste or upload the whole export"}
         </p>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button className="btn" disabled={busy || needsKey || !text.trim()} onClick={() => void run()}>
             {busy ? "Scanning…" : "Scan & catalog"}
           </button>
+          {busy && (
+            <button className="btn ghost" onClick={stop}>
+              Stop (keeps what's found)
+            </button>
+          )}
+          {!busy && remaining.length > 0 && (
+            <button className="btn secondary" onClick={() => void run(true)}>
+              Scan remaining parts ({remaining.length})
+            </button>
+          )}
           <button className="btn ghost" disabled={busy} onClick={() => fileRef.current?.click()}>
-            Upload text file
+            Upload file (.csv, .txt…)
           </button>
           <button className="btn ghost" disabled={busy} onClick={() => shotRef.current?.click()}>
             Add screenshots (OCR)
@@ -174,11 +312,12 @@ export default function Scan({ settings, goSettings }: Props) {
           <input
             ref={fileRef}
             type="file"
-            accept=".txt,.csv,.log,.md,text/plain,text/csv"
+            accept=".txt,.csv,.tsv,.log,.md,.json,text/plain,text/csv"
+            multiple
             style={{ display: "none" }}
             onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) void onFile(f);
+              const files = Array.from(e.target.files || []);
+              if (files.length) void onFiles(files);
               e.target.value = "";
             }}
           />
@@ -196,6 +335,11 @@ export default function Scan({ settings, goSettings }: Props) {
           />
         </div>
         {progress && <p className="muted small" style={{ marginTop: 8 }}>{progress}</p>}
+        <p className="muted small" style={{ marginTop: 8 }}>
+          Deep scans always run on Claude Opus 5. A very large export takes a while — keep this
+          tab open; you can stop anytime and finish later, and results appear below as each part
+          completes.
+        </p>
       </div>
 
       {error && <div className="notice">{error}</div>}
@@ -203,24 +347,34 @@ export default function Scan({ settings, goSettings }: Props) {
 
       {result && (
         <>
-          {result.summary && (
-            <div className="panel">
-              <h2>What the scan found</h2>
-              <p>{result.summary}</p>
-              <label className="field" style={{ maxWidth: 280 }}>
-                <span>Date to use for undated items (marked for you to confirm)</span>
-                <input type="date" value={fallbackDate} onChange={(e) => setFallbackDate(e.target.value)} />
-              </label>
-              <button className="btn" onClick={() => void commit()}>
-                Add {pickedInc.size + pickedMsg.size} selected to my records
-              </button>
-            </div>
-          )}
+          <div className="panel">
+            <h2>What the scan found</h2>
+            {result.summary && <p style={{ whiteSpace: "pre-wrap" }}>{result.summary}</p>}
+            <label className="field" style={{ maxWidth: 280 }}>
+              <span>Date to use for undated items (marked for you to confirm)</span>
+              <input type="date" value={fallbackDate} onChange={(e) => setFallbackDate(e.target.value)} />
+            </label>
+            <button className="btn" disabled={busy} onClick={() => void commit()}>
+              Add {pickedInc.size + pickedMsg.size} selected to my records
+            </button>
+            {busy && (
+              <p className="muted small" style={{ marginTop: 6 }}>
+                Still scanning — the list below grows as parts finish. Save when it's done (or
+                stop first).
+              </p>
+            )}
+          </div>
 
           {result.incidents.length > 0 && (
             <div className="panel">
               <h2>Incidents found ({result.incidents.length})</h2>
-              {result.incidents.map((i, idx) => (
+              {result.incidents.length > 400 && (
+                <p className="muted small">
+                  Showing the first 400 to keep this page fast — every one of the{" "}
+                  {result.incidents.length.toLocaleString()} is selected and will be saved.
+                </p>
+              )}
+              {result.incidents.slice(0, 400).map((i, idx) => (
                 <div className="item-card" key={idx}>
                   <div className="head">
                     <input
@@ -250,7 +404,13 @@ export default function Scan({ settings, goSettings }: Props) {
           {result.messages.length > 0 && (
             <div className="panel">
               <h2>Messages to flag ({result.messages.length})</h2>
-              {result.messages.map((m, idx) => (
+              {result.messages.length > 400 && (
+                <p className="muted small">
+                  Showing the first 400 to keep this page fast — every one of the{" "}
+                  {result.messages.length.toLocaleString()} is selected and will be saved.
+                </p>
+              )}
+              {result.messages.slice(0, 400).map((m, idx) => (
                 <div className="item-card" key={idx}>
                   <div className="head">
                     <input
