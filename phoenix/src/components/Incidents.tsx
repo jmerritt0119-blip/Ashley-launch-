@@ -218,7 +218,7 @@ export default function Incidents() {
       </div>
 
       {visible.map((i) => (
-        <div className="item-card" key={i.id}>
+        <div className={`item-card sev-${i.severity}`} key={i.id}>
           <div className="head">
             <span className="date">
               {i.date}

@@ -2,7 +2,7 @@
 // - Navigations: network-first (so updates land), cached shell as fallback.
 // - Same-origin assets: cache-first (Vite hashes filenames, safe forever).
 // - /api/* is never cached.
-const CACHE = "phx-cache-v1";
+const CACHE = "phx-cache-v2";
 
 self.addEventListener("install", () => {
   self.skipWaiting();

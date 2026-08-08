@@ -101,7 +101,15 @@ export default function App() {
     <div className="app">
       <header className="topbar no-print">
         <div className="brand">
-          <span className="flame">{settings.discreet ? "▣" : "🔥"}</span>
+          <span className="flame">
+            {settings.discreet ? (
+              "▣"
+            ) : (
+              <svg viewBox="0 0 24 30" fill="currentColor" aria-hidden="true">
+                <path d="M12 0C13 6 19 9 19 17c0 5-3.4 9-7 9s-7-4-7-9C5 12 8.5 8.5 9.5 5c1 2 2.5 3.5 2.5 6.5C13.5 9.5 12.5 4.5 12 0zm0 26c1.9 0 3.5-2 3.5-4.5 0-3-2-4.5-3.5-7-1.5 2.5-3.5 4-3.5 7C8.5 24 10.1 26 12 26z" />
+              </svg>
+            )}
+          </span>
           <span>{settings.discreet ? "Notes" : "Phoenix"}</span>
           {!settings.discreet && <span className="sub">case builder for survivors</span>}
         </div>

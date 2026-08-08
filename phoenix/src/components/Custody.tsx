@@ -131,7 +131,7 @@ export default function Custody() {
 
       <h2 style={{ marginTop: 18 }}>Custody record ({entries?.length ?? 0})</h2>
       {(entries || []).map((i) => (
-        <div className="item-card" key={i.id}>
+        <div className={`item-card sev-${i.severity}`} key={i.id}>
           <div className="head">
             <span className="date">
               {i.date}
