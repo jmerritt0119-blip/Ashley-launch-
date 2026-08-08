@@ -6,6 +6,7 @@ import { MODEL_OPTIONS, type Settings } from "../settings";
 import { biometricsSupported, enrollBiometric } from "../webauthn";
 import { makeVaultCode, normalizeVaultCode, pullVault, pushVault, recoverPassphrase } from "../sync";
 import { makeRecoveryKey } from "../crypto";
+import { buildLabel } from "../buildStamp";
 import DataSafety from "./DataSafety";
 
 interface Props {
@@ -529,6 +530,10 @@ Created ${new Date().toLocaleString()}
       </div>
 
       {status && <div className="notice calm">{status}</div>}
+
+      <p className="muted small" style={{ textAlign: "center", marginTop: 24 }}>
+        Version {buildLabel()}
+      </p>
     </div>
   );
 }
