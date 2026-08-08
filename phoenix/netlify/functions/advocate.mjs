@@ -43,27 +43,39 @@ export default async (req) => {
   const model = ALLOWED_MODELS.has(body?.model) ? body.model : DEFAULT_MODEL;
   const caseContext =
     typeof body?.caseContext === 'string' && body.caseContext.trim()
-      ? body.caseContext.slice(0, 400000)
+      ? body.caseContext.slice(0, 900000)
       : null;
 
   const system = [{ type: 'text', text: ADVOCATE_SYSTEM, cache_control: { type: 'ephemeral' } }];
   if (caseContext) {
+    // Cached too: her case file is large and stable within a conversation, so
+    // follow-up questions read it at cache rates instead of paying full price.
     system.push({
       type: 'text',
       text: `The survivor has shared her current case file with you:\n\n${caseContext}`,
+      cache_control: { type: 'ephemeral' },
     });
   }
 
   const client = new Anthropic();
   const encoder = new TextEncoder();
 
+  // Live web search so The Advocate can verify current Texas statutes, county
+  // practice, and court standing orders instead of reciting them from memory.
+  // Deep Scan asks for strict JSON and must not browse; chat verifies law live.
+  const TOOLS =
+    body?.webSearch === false
+      ? undefined
+      : [{ type: 'web_search_20260209', name: 'web_search', max_uses: 8 }];
+
   const stream = new ReadableStream({
     async start(controller) {
       let emitted = false;
+      let searching = false;
 
-      const runOnce = (withFallbacks) =>
+      const runOnce = (withFallbacks, convo) =>
         new Promise((resolve, reject) => {
-          const params = { model, max_tokens: 8000, system, messages };
+          const params = { model, max_tokens: 8000, system, messages: convo, tools: TOOLS };
           let run;
           if (withFallbacks) {
             // Retry safety-classifier declines on Anthropic's recommended
@@ -80,15 +92,38 @@ export default async (req) => {
             emitted = true;
             controller.enqueue(encoder.encode(text));
           });
+          // Tell her something is happening while a search round-trips.
+          run.on('contentBlock', (block) => {
+            if (block?.type === 'server_tool_use' && !searching) {
+              searching = true;
+              controller.enqueue(encoder.encode('\n_Checking current Texas law…_\n\n'));
+            }
+          });
           run.finalMessage().then(resolve, reject);
         });
+
+      /**
+       * Server-side tools run in a bounded loop; when it hits the limit the
+       * turn ends with stop_reason "pause_turn" and must be resumed by
+       * re-sending the conversation with the paused assistant turn appended.
+       */
+      const runWithResume = async (withFallbacks) => {
+        let convo = messages;
+        let finalMsg;
+        for (let i = 0; i < 4; i++) {
+          finalMsg = await runOnce(withFallbacks, convo);
+          if (finalMsg?.stop_reason !== 'pause_turn') return finalMsg;
+          convo = [...convo, { role: 'assistant', content: finalMsg.content }];
+        }
+        return finalMsg;
+      };
 
       try {
         let finalMsg;
         try {
-          finalMsg = await runOnce(true);
+          finalMsg = await runWithResume(true);
         } catch (err) {
-          if (!emitted) finalMsg = await runOnce(false);
+          if (!emitted) finalMsg = await runWithResume(false);
           else throw err;
         }
         if (finalMsg?.stop_reason === 'refusal') {

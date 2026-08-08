@@ -11,6 +11,16 @@ export const QUICK_ACTIONS: { label: string; prompt: string }[] = [
       "My child's other parent is dangerous. Using my case snapshot, lay out the legal protections I should be pursuing to keep my child safe — protective orders covering her, emergency custody, supervised or suspended visitation, safe exchanges — what documentation each one needs, and exactly what to ask my attorney or the court. Flag anything I should act on immediately.",
   },
   {
+    label: "Get a Texas protective order",
+    prompt:
+      "Walk me through getting a protective order in Texas that covers me and my daughter. Look up the current Texas Family Code requirements and my county's process. Tell me: which type I should be seeking (temporary ex parte vs final, and whether a Magistrate's Order for Emergency Protection may already exist from any arrest), what evidence from my case file supports each required finding, exactly where and how to file in my county, whether the district attorney's office or legal aid can file it for me at no cost, what it can order him to do, and what happens if he violates it. Ask me for my county if you need it.",
+  },
+  {
+    label: "What Texas law says about my case",
+    prompt:
+      "Using my case file, explain where I stand under Texas law specifically. Cover: conservatorship and possession under the Texas Family Code given the family violence in my record, what the community property division could look like and whether the abuse supports a disproportionate share, whether I may qualify for spousal maintenance, and what the 60-day waiting period means for my timeline. Verify the current statutes before you cite them, and mark clearly which points are strong, which need more evidence, and which I must confirm with my attorney.",
+  },
+  {
     label: "Build my timeline",
     prompt:
       "Using my case snapshot, build a chronological summary of the abuse and key events, grouped by pattern, in a format I could hand to my attorney.",
@@ -47,20 +57,67 @@ const trunc = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "…" : 
 /** Compact plain-text snapshot of the case for AI context. */
 export async function buildCaseSnapshot(): Promise<string> {
   const todayStr = new Date().toISOString().slice(0, 10);
-  const [incidents, messages, evidence, financials, upcomingDates] = await Promise.all([
-    db.incidents.orderBy("date").reverse().limit(40).toArray(),
-    db.messages.orderBy("date").reverse().limit(200).toArray(),
-    db.evidence.orderBy("date").reverse().limit(40).toArray(),
-    db.financials.toArray(),
-    db.dates.where("date").aboveOrEqual(todayStr).sortBy("date"),
-  ]);
-  const starred = messages.filter((m) => m.starred).slice(0, 50);
+  // Opus 5 has a 1M-token window — give it the whole case, not a sample.
+  // Every incident and every flagged message goes in; the full archive is
+  // summarized statistically so patterns over years of messages are visible
+  // without shipping all of them on every turn.
+  const [incidents, starredAll, evidence, financials, upcomingDates, totalMessages] =
+    await Promise.all([
+      db.incidents.orderBy("date").reverse().limit(400).toArray(),
+      db.messages.filter((m) => m.starred).toArray(),
+      db.evidence.orderBy("date").reverse().limit(200).toArray(),
+      db.financials.toArray(),
+      db.dates.where("date").aboveOrEqual(todayStr).sortBy("date"),
+      db.messages.count(),
+    ]);
+  starredAll.sort((a, b) => (a.date < b.date ? 1 : -1));
+  const starred = starredAll.slice(0, 600);
 
   const lines: string[] = [];
   lines.push(`CASE SNAPSHOT (generated ${new Date().toISOString().slice(0, 10)})`);
   lines.push(
-    `Totals: ${incidents.length} incidents (most recent shown), ${messages.length} messages on file (${starred.length} starred), ${evidence.length} evidence items, ${financials.length} financial entries.`
+    `Totals: ${incidents.length} incidents, ${totalMessages.toLocaleString()} messages archived (${starredAll.length} flagged as significant), ${evidence.length} evidence items, ${financials.length} financial entries.`
   );
+
+  // Volume-over-time and tag distribution across the FULL archive — this is
+  // how a years-long pattern (escalation, spikes around court dates) shows up
+  // without sending every message on every turn.
+  if (totalMessages > 0) {
+    const byMonth = new Map<string, number>();
+    const byTag = new Map<string, number>();
+    let first = "9999";
+    let last = "0000";
+    await db.messages.each((m) => {
+      const month = (m.date || "").slice(0, 7);
+      if (month) {
+        byMonth.set(month, (byMonth.get(month) || 0) + 1);
+        if (m.date < first) first = m.date;
+        if (m.date > last) last = m.date;
+      }
+      for (const t of m.tags || []) byTag.set(t, (byTag.get(t) || 0) + 1);
+    });
+    if (byMonth.size) {
+      lines.push(`\nMESSAGE ARCHIVE: ${first} to ${last}. Volume by month (watch for spikes):`);
+      lines.push(
+        [...byMonth.entries()]
+          .sort()
+          .map(([m, n]) => `${m}: ${n}`)
+          .join(" | ")
+      );
+    }
+    if (byTag.size) {
+      lines.push(
+        "Flagged message tags: " +
+          [...byTag.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .map(([t, n]) => `${t} (${n})`)
+            .join(", ")
+      );
+    }
+    lines.push(
+      "The full archive is searchable in the app; ask her to search it if you need messages beyond the flagged ones below."
+    );
+  }
 
   if (upcomingDates.length) {
     lines.push("\nUPCOMING KEY DATES:");
@@ -87,7 +144,11 @@ export async function buildCaseSnapshot(): Promise<string> {
   }
 
   if (starred.length) {
-    lines.push("\nSTARRED MESSAGES (flagged as significant):");
+    lines.push(
+      `\nFLAGGED MESSAGES (${starred.length}${
+        starredAll.length > starred.length ? ` of ${starredAll.length}, newest first` : ""
+      }):`
+    );
     for (const m of starred) {
       lines.push(
         `- ${m.date} | ${m.sender}${m.tags.length ? ` | [${m.tags.join(", ")}]` : ""}: "${trunc(m.text, 240)}"`
@@ -143,6 +204,8 @@ export interface AdvocateOpts {
   caseContext: string | null;
   onDelta: (text: string) => void;
   signal?: AbortSignal;
+  /** Live law lookup. On for chat; off for Deep Scan, which needs strict JSON. */
+  webSearch?: boolean;
 }
 
 /**
@@ -165,6 +228,7 @@ async function viaServer(opts: AdvocateOpts): Promise<string> {
       messages: opts.history,
       caseContext: opts.caseContext,
       model: opts.model,
+      webSearch: opts.webSearch !== false,
     }),
   });
   if (res.status === 404) {
@@ -203,6 +267,7 @@ async function viaDirect(opts: AdvocateOpts): Promise<string> {
     system.push({
       type: "text",
       text: `The survivor has shared her current case file with you:\n\n${opts.caseContext}`,
+      cache_control: { type: "ephemeral" },
     });
   }
 
@@ -211,25 +276,41 @@ async function viaDirect(opts: AdvocateOpts): Promise<string> {
     max_tokens: 16000,
     system,
     messages: opts.history.map((t) => ({ role: t.role, content: t.content })),
+    ...(opts.webSearch === false
+      ? {}
+      : { tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 8 }] }),
     betas: ["server-side-fallback-2026-07-01"],
     // If a safety classifier declines (possible when quoting abusive messages),
     // automatically retry on Anthropic's recommended fallback model.
     fallbacks: "default",
   };
 
+  // Server tools run in a bounded loop; a "pause_turn" means resume by
+  // re-sending with the paused assistant turn appended.
+  const runWithResume = async (p: any, beta: boolean) => {
+    let convo = p.messages;
+    let msg: any;
+    for (let i = 0; i < 4; i++) {
+      const stream: any = beta
+        ? client.beta.messages.stream({ ...p, messages: convo }, { signal: opts.signal })
+        : client.messages.stream({ ...p, messages: convo }, { signal: opts.signal });
+      stream.on("text", (delta: string) => opts.onDelta(delta));
+      msg = await stream.finalMessage();
+      if (msg.stop_reason !== "pause_turn") return msg;
+      convo = [...convo, { role: "assistant", content: msg.content }];
+    }
+    return msg;
+  };
+
   let final: any;
   try {
-    const stream = client.beta.messages.stream(params, { signal: opts.signal });
-    stream.on("text", (delta: string) => opts.onDelta(delta));
-    final = await stream.finalMessage();
+    final = await runWithResume(params, true);
   } catch (err: any) {
     // Older accounts/SDK combinations may reject the fallback beta — retry plain.
     if (err?.status === 400 && params.fallbacks) {
       delete params.fallbacks;
       delete params.betas;
-      const stream = client.messages.stream(params, { signal: opts.signal });
-      stream.on("text", (delta: string) => opts.onDelta(delta));
-      final = await stream.finalMessage();
+      final = await runWithResume(params, false);
     } else {
       throw err;
     }
