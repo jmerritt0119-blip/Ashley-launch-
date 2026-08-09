@@ -293,7 +293,7 @@ export default function Dashboard({ go, displayName, settings }: Props) {
             than they would ever advise a friend to. If you have thought <em>maybe I'm
             overreacting</em> — this is what the evidence you wrote down actually says.
           </p>
-          <button className="btn secondary sm">Show me the pattern</button>
+          <button className="btn secondary sm">Show me the pattern — and whether he'll change</button>
         </div>
       )}
 

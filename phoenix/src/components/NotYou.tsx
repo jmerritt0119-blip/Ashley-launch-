@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { buildCoercionReport, buildPrognosis, type CoercionReport } from "../coercion";
+import { buildProfile, CHANGE_ANSWER, COURT_LINE } from "../psychology";
 import { usePaneActive } from "../paneContext";
 
 /**
@@ -48,8 +49,43 @@ export default function NotYou() {
         </div>
       )}
 
-      {report && report.cycles.length >= 2 && (
+      {report && report.findings.length > 0 && (
         <div className="panel" style={{ borderColor: "var(--accent)", borderWidth: 2 }}>
+          <h2 style={{ marginTop: 0 }}>Will he change?</h2>
+          <p style={{ marginTop: 0, fontWeight: 600 }}>{CHANGE_ANSWER.headline}</p>
+
+          {buildPrognosis(report).length > 0 && (
+            <>
+              <p className="small">
+                <strong>First, from your own file — which outranks anything general:</strong>
+              </p>
+              {buildPrognosis(report).map((p) => (
+                <div key={p.headline} style={{ marginBottom: 14 }}>
+                  <p style={{ margin: "0 0 4px", fontWeight: 600 }}>{p.headline}</p>
+                  <p className="small" style={{ margin: "0 0 4px" }}>{p.detail}</p>
+                  <p className="muted small" style={{ margin: 0 }}>
+                    <strong>From your records:</strong> {p.basis}
+                  </p>
+                </div>
+              ))}
+            </>
+          )}
+
+          <p className="small" style={{ marginBottom: 6 }}>
+            <strong>And what is known generally:</strong>
+          </p>
+          <ul className="small" style={{ lineHeight: 1.7, paddingLeft: 18, marginTop: 0 }}>
+            {CHANGE_ANSWER.points.map((p) => (
+              <li key={p.claim} style={{ marginBottom: 10 }}>
+                <strong>{p.claim}</strong> {p.detail}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {report && report.cycles.length >= 2 && (
+        <div className="panel">
           <h2 style={{ marginTop: 0 }}>The cycle, in order</h2>
           <p className="small" style={{ marginTop: 0 }}>
             Each line is something you recorded, followed by the remorse that came after it, and
@@ -78,28 +114,75 @@ export default function NotYou() {
         </div>
       )}
 
-      {report && buildPrognosis(report).length > 0 && (
+      {report && report.findings.length > 0 && (
         <div className="panel">
-          <h2 style={{ marginTop: 0 }}>Will this change?</h2>
+          <h2 style={{ marginTop: 0 }}>What is actually driving this</h2>
           <p className="small" style={{ marginTop: 0 }}>
-            The honest answer is in your own file. Nobody can diagnose him from text messages, and
-            you should be wary of anyone who tries — including this app. But what your records
-            show about what he <em>did</em> predicts the future better than any label would.
+            You have probably spent years looking for the thing you did that set it off, on the
+            assumption that if you could find it you could stop it. There was nothing to find.
+            Below is what the research on abusive men actually points to, matched against what is
+            in your file — and every one of them explains something you were told was your fault.
           </p>
-          {buildPrognosis(report).map((p) => (
-            <div key={p.headline} style={{ marginBottom: 14 }}>
-              <p style={{ margin: "0 0 4px", fontWeight: 600 }}>{p.headline}</p>
-              <p className="small" style={{ margin: "0 0 4px" }}>{p.detail}</p>
-              <p className="muted small" style={{ margin: 0 }}>
-                <strong>From your records:</strong> {p.basis}
+          {buildProfile(report).map((p) => (
+            <div
+              key={p.name}
+              style={{
+                marginBottom: 16,
+                paddingLeft: 12,
+                borderLeft: "3px solid var(--line)",
+              }}
+            >
+              <p style={{ margin: "0 0 2px", fontWeight: 600 }}>{p.name}</p>
+              <p className="muted small" style={{ margin: "0 0 6px", fontStyle: "italic" }}>
+                Also called: {p.alsoCalled}
+                {p.count > 0 && ` · ${p.count} supporting record${p.count === 1 ? "" : "s"} in your file`}
+              </p>
+              <p className="small" style={{ margin: "0 0 6px" }}>{p.what}</p>
+              <p className="small" style={{ margin: "0 0 6px" }}>{p.why}</p>
+              <p className="small" style={{ margin: 0 }}>
+                <strong>Does it change?</strong> {p.outlook}
               </p>
             </div>
           ))}
-          <p className="muted small" style={{ marginBottom: 0 }}>
-            None of this is a psychological diagnosis, and it should not be presented as one — in
-            court it would be challenged immediately and it would cost you credibility. What is
-            above is what your dated records actually show, which is the part that holds up.
+        </div>
+      )}
+
+      {report && report.findings.length > 0 && (
+        <div className="panel">
+          <h2 style={{ marginTop: 0 }}>Knowing this is for you. Court needs something different.</h2>
+          <p className="small" style={{ marginTop: 0 }}>
+            Now that you have language for it, the instinct is to use that language in a filing.
+            Don't — it is the one thing on this page that could actually hurt your case.
           </p>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+              gap: 18,
+            }}
+          >
+            <div>
+              <p className="small" style={{ margin: "0 0 4px", fontWeight: 600 }}>
+                Never say in court or in a filing
+              </p>
+              <ul className="small" style={{ lineHeight: 1.7, paddingLeft: 18, marginTop: 0 }}>
+                {COURT_LINE.cannot.map((c) => (
+                  <li key={c}>{c}</li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <p className="small" style={{ margin: "0 0 4px", fontWeight: 600 }}>
+                Say this instead — it cannot be attacked
+              </p>
+              <ul className="small" style={{ lineHeight: 1.7, paddingLeft: 18, marginTop: 0 }}>
+                {COURT_LINE.can.map((c) => (
+                  <li key={c}>{c}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+          <p className="muted small" style={{ marginBottom: 0 }}>{COURT_LINE.why}</p>
         </div>
       )}
 
