@@ -804,6 +804,18 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
                 — listed further down this page, and they keep appearing as it goes.
               </p>
             )}
+            {result && result.incidents.length > 0 && (
+              // The newest findings, as they land. A number going up is
+              // reassuring; seeing the actual thing it just found in her own
+              // record is the difference between believing it works and hoping.
+              <ul className="small muted" style={{ margin: "4px 0 0", paddingLeft: 18, lineHeight: 1.6 }}>
+                {result.incidents.slice(-3).reverse().map((i, n) => (
+                  <li key={`${i.date}-${n}`}>
+                    <strong>{i.date || "no date"}</strong> — {(i.title || "").slice(0, 90)}
+                  </li>
+                ))}
+              </ul>
+            )}
             <p className="muted small" style={{ margin: "2px 0 0" }}>
               You can leave this page or close the app — everything found so far is saved, and it
               picks up where it stopped.
