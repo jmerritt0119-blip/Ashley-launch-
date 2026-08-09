@@ -13,12 +13,12 @@ export const QUICK_ACTIONS: { label: string; prompt: string }[] = [
   {
     label: "Get a Texas protective order",
     prompt:
-      "Walk me through getting a protective order in Texas that covers me and my daughter. Look up the current Texas Family Code requirements and my county's process. Tell me: which type I should be seeking (temporary ex parte vs final, and whether a Magistrate's Order for Emergency Protection may already exist from any arrest), what evidence from my case file supports each required finding, exactly where and how to file in my county, whether the district attorney's office or legal aid can file it for me at no cost, what it can order him to do, and what happens if he violates it. Ask me for my county if you need it.",
+      "Walk me through getting a protective order in Texas that covers me and my daughter. Tell me: which type I should be seeking (temporary ex parte vs final, and whether a Magistrate's Order for Emergency Protection may already exist from any arrest), what evidence from my case file supports each required finding, exactly where and how to file in my county, whether the district attorney's office or legal aid can file it for me at no cost, what it can order him to do, and what happens if he violates it. Ask me for my county if you need it.",
   },
   {
     label: "What Texas law says about my case",
     prompt:
-      "Using my case file, explain where I stand under Texas law specifically. Cover: conservatorship and possession under the Texas Family Code given the family violence in my record, what the community property division could look like and whether the abuse supports a disproportionate share, whether I may qualify for spousal maintenance, and what the 60-day waiting period means for my timeline. Verify the current statutes before you cite them, and mark clearly which points are strong, which need more evidence, and which I must confirm with my attorney.",
+      "Using my case file, explain where I stand under Texas law specifically. Cover: conservatorship and possession under the Texas Family Code given the family violence in my record, what the community property division could look like and whether the abuse supports a disproportionate share, whether I may qualify for spousal maintenance, and what the 60-day waiting period means for my timeline. Cite the Family Code sections, and mark clearly which points are strong, which need more evidence, and which I must confirm with my attorney.",
   },
   {
     label: "Build my timeline",
@@ -56,6 +56,13 @@ export const QUICK_ACTIONS: { label: string; prompt: string }[] = [
       "Audit my documentation so far. What is missing, weak, or uncorroborated? Give me a prioritized, lawful to-do list to strengthen the divorce and custody case.",
   },
 ];
+
+/**
+ * Single control character the server appends when it ends an answer on
+ * purpose. If the stream ends without it, the answer was cut off — which used
+ * to be invisible.
+ */
+const DONE_MARK = "\u0004";
 
 const trunc = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "…" : s);
 
@@ -238,8 +245,14 @@ export interface AdvocateOpts {
   caseContext: string | null;
   onDelta: (text: string) => void;
   signal?: AbortSignal;
-  /** Live law lookup. On for chat; off for Deep Scan, which needs strict JSON. */
+  /**
+   * Live law lookup. OFF by default now — the Texas provisions her case turns
+   * on are in the system prompt, and searching every turn stalled the answer
+   * mid-sentence to re-derive law the model already knows.
+   */
   webSearch?: boolean;
+  /** "scan" is the chunked JSON Deep Scan; everything else is conversation. */
+  mode?: "chat" | "scan";
 }
 
 /**
@@ -262,7 +275,8 @@ async function viaServer(opts: AdvocateOpts): Promise<string> {
       messages: opts.history,
       caseContext: opts.caseContext,
       model: opts.model,
-      webSearch: opts.webSearch !== false,
+      mode: opts.mode ?? "chat",
+      webSearch: opts.webSearch === true,
     }),
   });
   if (res.status === 404) {
@@ -276,14 +290,33 @@ async function viaServer(opts: AdvocateOpts): Promise<string> {
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let full = "";
+  let clean = false;
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    const text = decoder.decode(value, { stream: true });
+    let text = decoder.decode(value, { stream: true });
+    if (!text) continue;
+    // The server marks a deliberate ending with a single control character.
+    // Its absence means the connection died mid-answer.
+    const cut = text.indexOf(DONE_MARK);
+    if (cut >= 0) {
+      clean = true;
+      text = text.slice(0, cut);
+    }
     if (text) {
       full += text;
       opts.onDelta(text);
     }
+  }
+  if (!clean) {
+    // She was shown an answer that simply stopped, with nothing to tell her it
+    // had stopped. Never again — an interrupted answer says so, and says what
+    // to do about it.
+    const note =
+      (full.trim() ? "\n\n" : "") +
+      "---\n**The connection dropped before that answer finished.** This is not your fault and nothing in your case file was affected. Type **continue** and I'll pick up where I left off.";
+    full += note;
+    opts.onDelta(note);
   }
   return full;
 }
@@ -307,14 +340,14 @@ async function viaDirect(opts: AdvocateOpts): Promise<string> {
 
   const params: any = {
     model: opts.model,
-    max_tokens: 16000,
+    max_tokens: opts.mode === "scan" || opts.webSearch === true ? 16000 : 32000,
     system,
     messages: opts.history.map((t) => ({ role: t.role, content: t.content })),
     thinking: { type: "adaptive" },
-    output_config: { effort: opts.webSearch === false ? "high" : "xhigh" },
-    ...(opts.webSearch === false
-      ? {}
-      : { tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 8 }] }),
+    output_config: { effort: "xhigh" },
+    ...(opts.webSearch === true
+      ? { tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 8 }] }
+      : {}),
     betas: ["server-side-fallback-2026-07-01"],
     // If a safety classifier declines (possible when quoting abusive messages),
     // automatically retry on Anthropic's recommended fallback model.

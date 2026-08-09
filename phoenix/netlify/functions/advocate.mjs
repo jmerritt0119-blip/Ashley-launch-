@@ -14,6 +14,9 @@ const ALLOWED_MODELS = new Set([
   'claude-haiku-4-5',
 ]);
 
+const CUT_SHORT =
+  "---\n**That answer ran long and stopped before I finished.** Nothing is wrong with your case or your file. Type **continue** and I'll pick up exactly where I left off.";
+
 const REFUSAL_NOTE =
   "I wasn't able to answer that one — the request tripped a safety filter on the model. Rephrase it (or ask me a different way) and I'll keep working. Nothing about your case was lost.";
 
@@ -60,13 +63,28 @@ export default async (req) => {
   const client = new Anthropic();
   const encoder = new TextEncoder();
 
-  // Live web search so The Advocate can verify current Texas statutes, county
-  // practice, and court standing orders instead of reciting them from memory.
-  // Deep Scan asks for strict JSON and must not browse; chat verifies law live.
+  // Deep Scan asks for strict JSON and is chunked; chat is the conversation.
+  // Stated explicitly rather than inferred from whether search is on, because
+  // search is now off for both and would no longer tell them apart.
+  const isChat = body?.mode !== 'scan';
+
+  // Web search is OFF by default, deliberately.
+  //
+  // It used to run on every chat turn. The cost was a visible stall and a
+  // "_Checking current Texas law…_" interruption in the middle of a frightened
+  // woman's answer, to re-derive statutes the model already knows cold — the
+  // Texas Family Code provisions her case turns on are written into the system
+  // prompt with their section numbers. Answering from that is both faster and
+  // steadier. Opt in per request when something genuinely current is needed.
   const TOOLS =
-    body?.webSearch === false
-      ? undefined
-      : [{ type: 'web_search_20260209', name: 'web_search', max_uses: 8 }];
+    body?.webSearch === true
+      ? [{ type: 'web_search_20260209', name: 'web_search', max_uses: 8 }]
+      : undefined;
+
+  // Marks a clean finish. Without it, a stream that dies mid-answer is
+  // indistinguishable from one that ended — which is exactly how she was shown
+  // "Good. Now here is the answer." and then nothing at all.
+  const DONE = '\u0004';
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -78,13 +96,17 @@ export default async (req) => {
           // Adaptive thinking at high effort: this is a woman's custody case,
           // not a chatbot — depth of reasoning matters more than latency.
           // Deep Scan (webSearch:false) runs leaner since it only emits JSON.
+          // 16000 was too tight. This budget covers thinking AND the answer,
+          // and a custody question at high effort can spend most of it
+          // reasoning — which is how an answer got cut off at the exact moment
+          // it was about to start. Deep Scan (JSON only) stays lean.
           const params = {
             model,
-            max_tokens: 16000,
+            max_tokens: TOOLS || !isChat ? 16000 : 32000,
             system,
             messages: convo,
             thinking: { type: 'adaptive' },
-            output_config: { effort: TOOLS ? 'xhigh' : 'high' },
+            output_config: { effort: 'xhigh' },
             ...(TOOLS ? { tools: TOOLS } : {}),
           };
           let run;
@@ -140,6 +162,14 @@ export default async (req) => {
         if (finalMsg?.stop_reason === 'refusal') {
           controller.enqueue(encoder.encode('\n\n' + REFUSAL_NOTE));
         }
+        // An answer that stops early must SAY it stopped early. Silence here is
+        // what left her looking at "Good. Now here is the answer." and nothing
+        // else — the worst possible failure for someone who asked because she
+        // was frightened. Chat only; Deep Scan parses this stream as JSON.
+        if (isChat && (finalMsg?.stop_reason === 'max_tokens' || finalMsg?.stop_reason === 'pause_turn')) {
+          controller.enqueue(encoder.encode('\n\n' + CUT_SHORT));
+        }
+        controller.enqueue(encoder.encode(DONE));
         controller.close();
       } catch (err) {
         const status = err?.status;
@@ -161,6 +191,9 @@ export default async (req) => {
         }
         try {
           if (!emitted) controller.enqueue(encoder.encode(message));
+          // A handled error is still a deliberate ending — mark it clean so the
+          // client reports this reason rather than stacking a second warning.
+          controller.enqueue(encoder.encode(DONE));
         } catch {}
         controller.close();
       }

@@ -1,0 +1,64 @@
+name: Diagnose the Advocate
+
+# Asks the live Advocate a real, heavy question and reports exactly how the
+# answer ended: how long it took, how much came back, and what the last words
+# were. Written because she was shown "Good. Now here is the answer." and then
+# nothing — and the two candidate causes (the model hitting its token ceiling
+# vs. the function being killed mid-stream) need opposite fixes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      question:
+        description: "Question to ask the live Advocate"
+        required: false
+        default: >-
+          He says he will take her from me and that no court will believe me
+          because of what he has told them about my mental health. Can he
+          actually get custody of my daughter in Texas?
+
+jobs:
+  ask:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ask the live Advocate and time the answer
+        run: |
+          URL="https://phoenix-case-builder.netlify.app/api/advocate"
+          Q=$(jq -Rn --arg q "${{ inputs.question }}" '{messages:[{role:"user",content:$q}]}')
+
+          start=$(date +%s.%N)
+          code=$(curl -s -N -o /tmp/ans.txt -w '%{http_code}' -m 300 -X POST \
+            -H 'content-type: application/json' --data "$Q" "$URL" || echo "000")
+          end=$(date +%s.%N)
+
+          secs=$(echo "$end - $start" | bc)
+          bytes=$(wc -c < /tmp/ans.txt)
+          echo "HTTP $code · ${secs}s · ${bytes} bytes"
+          echo
+          echo "=================== LAST 600 BYTES ==================="
+          tail -c 600 /tmp/ans.txt; echo
+          echo "======================================================"
+          echo
+          echo "=================== FIRST 400 BYTES =================="
+          head -c 400 /tmp/ans.txt; echo
+          echo "======================================================"
+
+          # An answer that stops without terminal punctuation is a truncation,
+          # not a conclusion.
+          last=$(tr -d '[:space:]' < /tmp/ans.txt | tail -c 1)
+          echo "last non-space character: '$last'"
+          case "$last" in
+            .|!|\?|\)|\"|\'|:|\;) echo "VERDICT: ends like a finished sentence" ;;
+            *) echo "VERDICT: TRUNCATED — ends mid-thought" ;;
+          esac
+
+          # Which cause? A wall-clock cliff points at the function being killed;
+          # a longer run that stops mid-sentence points at the token ceiling.
+          whole=${secs%.*}
+          if [ "$whole" -le 11 ]; then
+            echo "TIMING: died at ~10s — consistent with the function being killed"
+          elif [ "$whole" -le 27 ]; then
+            echo "TIMING: died at ~26s — consistent with the function being killed"
+          else
+            echo "TIMING: ran ${secs}s — past the usual function limits"
+          fi
