@@ -308,6 +308,13 @@ async function viaServer(opts: AdvocateOpts): Promise<string> {
       opts.onDelta(text);
     }
   }
+  if (!clean && opts.mode === "scan") {
+    // Deep Scan parses this stream as JSON and retries failed chunks. A cut-off
+    // chunk must fail loudly so the retry runs — half a catalog quietly
+    // accepted would drop her evidence without anyone noticing. Prose must
+    // never be appended here either; it would corrupt the JSON.
+    throw new Error("The connection dropped part-way through this section.");
+  }
   if (!clean) {
     // She was shown an answer that simply stopped, with nothing to tell her it
     // had stopped. Never again — an interrupted answer says so, and says what
