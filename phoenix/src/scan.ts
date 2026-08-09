@@ -49,7 +49,16 @@ export interface ScanResult {
 // There is no cap on how much can be scanned. Anything bigger than one part
 // is split at line boundaries and scanned part by part, so a full multi-year
 // message export (tens of thousands of texts) goes through in a single run.
-export const SCAN_CHUNK_SIZE = 60_000;
+/**
+ * How much of her archive goes into one Deep Scan request.
+ *
+ * Was 60,000. That is roughly 15,000 tokens in, and the JSON catalog it has to
+ * produce comes back out of a 16,000-token budget — so a dense stretch of
+ * messages could exceed the ceiling every single time, which no amount of
+ * retrying fixes. Smaller parts finish faster, leave real headroom, and turn a
+ * failure into one lost part instead of a lost archive.
+ */
+export const SCAN_CHUNK_SIZE = 30_000;
 
 /** The model every deep scan runs on, regardless of the chat model picker. */
 export const SCAN_MODEL = "claude-opus-5";

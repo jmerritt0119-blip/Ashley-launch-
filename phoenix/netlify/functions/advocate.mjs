@@ -93,20 +93,25 @@ export default async (req) => {
 
       const runOnce = (withFallbacks, convo) =>
         new Promise((resolve, reject) => {
-          // Adaptive thinking at high effort: this is a woman's custody case,
-          // not a chatbot — depth of reasoning matters more than latency.
-          // Deep Scan (webSearch:false) runs leaner since it only emits JSON.
-          // 16000 was too tight. This budget covers thinking AND the answer,
-          // and a custody question at high effort can spend most of it
-          // reasoning — which is how an answer got cut off at the exact moment
-          // it was about to start. Deep Scan (JSON only) stays lean.
+          // Effort and budget are set PER MODE, and the difference matters.
+          //
+          // Chat is one answer to one frightened question: xhigh, and 32000
+          // tokens because the budget covers thinking AND the answer, and a
+          // custody question spends most of it reasoning — 16000 is what cut an
+          // answer off at the exact moment it was about to start.
+          //
+          // Deep Scan is sixty-odd sequential parts over a whole archive. It
+          // runs at 'high' because that is what completes. Raising it to xhigh
+          // made every part slow enough to die mid-stream, and a real 63-part
+          // scan failed 63 times out of 63. It emits JSON, not prose; the extra
+          // effort bought nothing and cost her the entire scan.
           const params = {
             model,
-            max_tokens: TOOLS || !isChat ? 16000 : 32000,
+            max_tokens: isChat ? 32000 : 24000,
             system,
             messages: convo,
             thinking: { type: 'adaptive' },
-            output_config: { effort: 'xhigh' },
+            output_config: { effort: isChat ? 'xhigh' : 'high' },
             ...(TOOLS ? { tools: TOOLS } : {}),
           };
           let run;

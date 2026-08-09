@@ -347,11 +347,13 @@ async function viaDirect(opts: AdvocateOpts): Promise<string> {
 
   const params: any = {
     model: opts.model,
-    max_tokens: opts.mode === "scan" || opts.webSearch === true ? 16000 : 32000,
+    // Per mode, for the same reason as the server: Deep Scan runs many parts
+    // in sequence and only finishes at "high". xhigh killed a 63-part scan.
+    max_tokens: opts.mode === "scan" ? 24000 : 32000,
     system,
     messages: opts.history.map((t) => ({ role: t.role, content: t.content })),
     thinking: { type: "adaptive" },
-    output_config: { effort: "xhigh" },
+    output_config: { effort: opts.mode === "scan" ? "high" : "xhigh" },
     ...(opts.webSearch === true
       ? { tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 8 }] }
       : {}),
