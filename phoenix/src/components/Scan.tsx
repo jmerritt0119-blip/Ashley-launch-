@@ -34,6 +34,47 @@ function detectCsvMessages(doc: string): ParsedMessage[] {
 
 const today = () => new Date().toISOString().slice(0, 10);
 
+/**
+ * An unfinished scan, kept on disk so closing the tab does not throw it away.
+ *
+ * All of it used to live in React state and refs: the document, the chunks, the
+ * parts already catalogued, and the list of parts still to do. The app told her
+ * to "tap Scan remaining parts to finish" — a promise it could not keep, because
+ * a reload erased every one of those. Finishing then meant re-uploading millions
+ * of characters and paying for the whole scan a second time.
+ *
+ * Only the parts NOT yet done are stored, plus what has been found so far, which
+ * is far smaller than the original export and enough to finish.
+ */
+const SCAN_STATE_KEY = "scanInProgress";
+
+interface SavedScan {
+  chunks: string[];
+  remaining: number[];
+  parts: ScanResult[];
+  total: number;
+  savedAt: number;
+}
+
+async function saveScanState(v: SavedScan | null): Promise<void> {
+  try {
+    if (v) await db.kv.put({ key: SCAN_STATE_KEY, value: v });
+    else await db.kv.delete(SCAN_STATE_KEY);
+  } catch {
+    /* a scan must never fail because progress could not be written */
+  }
+}
+
+async function loadScanState(): Promise<SavedScan | null> {
+  try {
+    const row = await db.kv.get(SCAN_STATE_KEY);
+    const v = row?.value as SavedScan | undefined;
+    return v && Array.isArray(v.chunks) && v.remaining?.length ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 interface Props {
   settings: Settings;
   goSettings: () => void;
@@ -211,7 +252,23 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
         setText(t);
       }
       void run(false, t);
+      return;
     }
+    // Nothing handed over — pick up an unfinished scan if one was left behind.
+    void (async () => {
+      if (busy || chunksRef.current.length) return;
+      const saved = await loadScanState();
+      if (!saved) return;
+      chunksRef.current = saved.chunks;
+      partsRef.current = saved.parts;
+      setRemaining(saved.remaining);
+      if (saved.parts.length) applyMerged(mergeScanResults(saved.parts));
+      setLoadedNote(
+        `You have an unfinished scan — ${saved.remaining.length} of ${saved.total} parts left. ` +
+          `Everything already read is below and saved. Tap "Scan remaining parts" to finish; ` +
+          `you do not need to upload anything again.`
+      );
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
 
@@ -326,6 +383,15 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
       // evidence that did come back is kept rather than thrown away.
       if (!ok && !abort.signal.aborted) failed.push(idx);
       if (parts.length) applyMerged(mergeScanResults(parts));
+
+      // Write progress after every part. A tab closed mid-scan now costs at
+      // most the part that was in flight, instead of the entire run.
+      const stillToDo = [...failed, ...indices.slice(n + 1)];
+      await saveScanState(
+        stillToDo.length
+          ? { chunks, remaining: stillToDo, parts, total: chunks.length, savedAt: Date.now() }
+          : null
+      );
     }
 
     setRemaining(failed);

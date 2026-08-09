@@ -31,6 +31,11 @@ export default function Dashboard({ go, displayName, settings }: Props) {
         db.dates.where("date").aboveOrEqual(today).sortBy("date"),
         db.kv.get("lastBackupAt"),
       ]);
+    // An unfinished scan is easy to lose track of — it lives on another tab,
+    // and she has no reason to go looking for it.
+    const savedScan = (await db.kv.get("scanInProgress"))?.value as
+      | { remaining: number[]; total: number }
+      | undefined;
     return {
       incidents,
       messages,
@@ -39,6 +44,8 @@ export default function Dashboard({ go, displayName, settings }: Props) {
       financials,
       next: nextDates[0] ?? null,
       lastBackupAt: (lastBackup?.value as number | undefined) ?? null,
+      scanLeft: savedScan?.remaining?.length ?? 0,
+      scanTotal: savedScan?.total ?? 0,
     };
   });
 
@@ -128,6 +135,14 @@ export default function Dashboard({ go, displayName, settings }: Props) {
           }}
         />
       </div>
+
+      {!!counts?.scanLeft && (
+        <div className="notice" style={{ cursor: "pointer" }} onClick={() => go("scan")}>
+          <strong>Your scan isn't finished.</strong> {counts.scanLeft} of {counts.scanTotal} parts
+          are still to read. Everything already found is saved and safe. Tap to pick up where it
+          stopped — you don't need to upload anything again.
+        </div>
+      )}
 
       {counts?.next && (
         <div className="notice" style={{ cursor: "pointer" }} onClick={() => go("dates")}>
