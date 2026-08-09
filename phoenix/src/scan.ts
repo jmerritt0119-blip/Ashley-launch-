@@ -421,7 +421,23 @@ Rules:
   surface them even if she has not framed them as important.
 - Quotes verbatim, always, everywhere. For incidents, flaggedMessages, riskIndicators and caseFacts, extract only what the document actually says — no inference, no exaggeration, because a conservative catalog survives cross-examination. Inference belongs in impliedFindings and nowhere else, where it is labelled as a reading and carries its own basis and confidence.
 - "incidents" are events; "flaggedMessages" are individual significant quotes/messages. An event described by a quote can appear in both.
-- Severity: 1 minor … 5 extreme/dangerous. Be conservative.
+- Severity, with anchors — use them literally rather than averaging toward the middle:
+  5 — strangulation or choking, hands on the neck, anything about her breathing;
+      a threat to kill her, the child, himself as leverage, or a pet; a weapon
+      shown, held, referenced or accessed; sexual assault or coerced sex;
+      violence to her while pregnant or while she is holding the child; a threat
+      to take the child and disappear; violence that caused injury needing care.
+  4 — any other physical violence (grabbing, shoving, pinning, blocking her
+      exit, throwing something at her); a credible threat of harm; violence in
+      front of the child; destroying her property or punching walls near her;
+      stalking or tracking her movements.
+  3 — sustained degradation, coercive control, financial control, isolation, or
+      using the child as leverage.
+  2 — a single incident of verbal abuse or a controlling demand.
+  1 — a minor incident she recorded for completeness.
+  "Be conservative" means do not inflate a 3 into a 5. It does NOT mean avoiding
+  5 — a 5 that is recorded as a 3 buries the evidence that decides a protective
+  order, and those are the entries her attorney and the court need first.
 - Stay within limits, and be strict about it: keep at most 12 flaggedMessages and 6 incidents from this part — the most legally significant ones (favor threats, violence, admissions, and anything involving children) — and note in "summary" that more of the same pattern exists. A part is small; a catalog that runs long is one that never gets delivered at all.
 - If the document contains nothing relevant, return empty arrays and say so in "summary".
 

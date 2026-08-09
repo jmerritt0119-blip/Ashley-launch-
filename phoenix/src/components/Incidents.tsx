@@ -24,15 +24,20 @@ export default function Incidents() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [filter, setFilter] = useState<string>("");
+  /** Minimum severity to show — how she finds the worst of it fast. */
+  const [minSev, setMinSev] = useState<number>(0);
 
   const incidents = useLiveQuery(
     () => db.incidents.orderBy("date").reverse().toArray(),
     []
   );
 
-  const visible = (incidents || []).filter(
-    (i) => !filter || i.categories.includes(filter)
+  const all = incidents || [];
+  const visible = all.filter(
+    (i) => (!filter || i.categories.includes(filter)) && i.severity >= minSev
   );
+  /** The highest severity anything in her file actually reaches. */
+  const worst = all.reduce((n, i) => Math.max(n, i.severity), 0);
 
   const set = (patch: Partial<typeof BLANK>) => setDraft((d) => ({ ...d, ...patch }));
 
@@ -215,8 +220,43 @@ export default function Incidents() {
             </option>
           ))}
         </select>
+        <select
+          value={minSev}
+          onChange={(e) => setMinSev(Number(e.target.value))}
+          style={{ maxWidth: 220 }}
+        >
+          <option value={0}>Any severity</option>
+          <option value={5}>Only the most serious (5)</option>
+          <option value={4}>Serious and above (4–5)</option>
+          <option value={3}>Moderate and above (3–5)</option>
+        </select>
         <span className="muted small">{visible.length} shown</span>
       </div>
+
+      {/*
+        Asking for the worst and being shown an empty page reads as a verdict —
+        as though none of it was that bad. It is nothing of the kind: it is the
+        scanner having graded cautiously, or those entries not being catalogued
+        yet. Say so, and show her the nearest thing rather than nothing.
+      */}
+      {minSev > 0 && visible.length === 0 && all.length > 0 && (
+        <div className="notice calm">
+          <strong>Nothing in your file is marked {minSev} or higher yet.</strong> That is not a
+          judgement about what happened to you — it is how these entries were graded, and the
+          scanner grades cautiously. The most serious thing recorded so far is a{" "}
+          <strong>{worst}</strong>.
+          <div style={{ marginTop: 8 }}>
+            <button className="btn secondary sm" onClick={() => setMinSev(worst)}>
+              Show me the worst {worst === 5 ? "" : `(${worst})`} of what's here
+            </button>
+          </div>
+          <p className="small" style={{ marginBottom: 0 }}>
+            If something belongs higher — anything about your neck or breathing, a weapon, a threat
+            to kill, anything sexual you did not agree to, or violence in front of your daughter —
+            open it and change the severity yourself. Yours is the account that counts.
+          </p>
+        </div>
+      )}
 
       {visible.map((i) => (
         <div className={`item-card sev-${i.severity}`} key={i.id}>
