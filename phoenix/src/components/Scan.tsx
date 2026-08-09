@@ -113,6 +113,8 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
   /** How far through the parts she is, and roughly how much longer. */
   const [pct, setPct] = useState<number | null>(null);
   const [eta, setEta] = useState("");
+  /** Findings the merge dropped because an earlier part already had them. */
+  const [dupes, setDupes] = useState(0);
   const [added, setAdded] = useState<string | null>(null);
   const [remaining, setRemaining] = useState<number[]>([]);
   const [loadedNote, setLoadedNote] = useState<string | null>(null);
@@ -384,6 +386,7 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     const startedAt = Date.now();
     setPct(0);
     setEta("");
+    setDupes(0);
 
     /** One request for one piece of text. Returns null rather than throwing. */
     const scanPiece = async (piece: string, index: number, total: number) => {
@@ -514,7 +517,17 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
         if (rescued === halves.length) ok = true;
       }
       if (!ok && !abort.signal.aborted) failed.push(idx);
-      if (parts.length) applyMerged(mergeScanResults(parts));
+      if (parts.length) {
+        const merged = mergeScanResults(parts);
+        // Parts overlap at their boundaries and the same incident often shows
+        // up in two of them. The merge has always dropped those silently,
+        // which meant the one thing proving the app is being careful with her
+        // record was invisible. Count them and say so.
+        const raw =
+          parts.reduce((n, p) => n + p.incidents.length + p.messages.length, 0);
+        setDupes(Math.max(0, raw - merged.incidents.length - merged.messages.length));
+        applyMerged(merged);
+      }
 
       // Write progress after every part. A tab closed mid-scan now costs at
       // most the part that was in flight, instead of the entire run.
@@ -803,6 +816,15 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
                 </strong>{" "}
                 — listed further down this page, and they keep appearing as it goes.
               </p>
+            )}
+            {dupes > 0 && (
+              <p className="small muted" style={{ margin: "2px 0 0" }}>
+                {dupes.toLocaleString()} repeat{dupes === 1 ? "" : "s"} skipped — the same thing
+                turning up in two parts is only recorded once, so your file stays clean.
+              </p>
+            )}
+            {dupNote && (
+              <p className="small muted" style={{ margin: "2px 0 0" }}>{dupNote}</p>
             )}
             {result && result.incidents.length > 0 && (
               // The newest findings, as they land. A number going up is
