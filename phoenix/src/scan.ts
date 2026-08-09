@@ -74,6 +74,24 @@ export const SCAN_CHUNK_SIZE = 30_000;
  */
 export const SCAN_MODEL = "claude-sonnet-5";
 
+/**
+ * Bumped whenever the scanner gets materially better — a wider taxonomy, a
+ * sharper prompt, a stronger model.
+ *
+ * Her archive was catalogued by whatever version was current when she ran it.
+ * When this number moves past the one recorded with her results, the app can
+ * tell her plainly that a re-scan would find things the old one missed, say
+ * what it will cost, and let her decide. Re-scanning is purely additive:
+ * mergeScanResults deduplicates by date and content, so nothing she has
+ * reviewed or kept is ever replaced or lost.
+ */
+export const SCANNER_VERSION = 3;
+
+/** What changed, so the offer can say why it is worth her money. */
+export const SCANNER_NOTES: Record<number, string> = {
+  3: "now also catalogs financial facts, hidden assets and parenting-capacity evidence, not just abuse",
+};
+
 export function chunkScanInput(text: string): string[] {
   const t = text.trim();
   if (!t) return [];

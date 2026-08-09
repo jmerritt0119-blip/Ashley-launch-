@@ -12,6 +12,7 @@ import ProtectiveOrder from "./components/ProtectiveOrder";
 import Messages from "./components/Messages";
 import Journal from "./components/Journal";
 import Patterns from "./components/Patterns";
+import NotYou from "./components/NotYou";
 import Evidence from "./components/Evidence";
 import Financials from "./components/Financials";
 import Timeline from "./components/Timeline";
@@ -38,6 +39,7 @@ const VIEWS: { key: string; label: string }[] = [
   { key: "messages", label: "Messages" },
   { key: "journal", label: "Journal" },
   { key: "patterns", label: "Patterns" },
+  { key: "notyou", label: "It wasn\u2019t you" },
   { key: "evidence", label: "Evidence" },
   { key: "dates", label: "Dates" },
   { key: "timeline", label: "Timeline" },
@@ -73,6 +75,7 @@ const SECTIONS: { key: string; label: string; views: string[] }[] = [
     key: "case",
     label: "My case",
     views: [
+      "notyou",
       "timeline",
       "patterns",
       "violations",
@@ -325,6 +328,9 @@ export default function App() {
         </Pane>
         <Pane on={view} me="patterns" mounted={mounted}>
           <Patterns settings={settings} go={go} />
+        </Pane>
+        <Pane on={view} me="notyou" mounted={mounted}>
+          <NotYou />
         </Pane>
         <Pane on={view} me="evidence" mounted={mounted}>
           <Evidence />

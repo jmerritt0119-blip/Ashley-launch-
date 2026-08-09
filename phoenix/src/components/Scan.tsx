@@ -9,6 +9,7 @@ import {
   parseScanResult,
   SCAN_CHUNK_SIZE,
   SCAN_MODEL,
+  SCANNER_VERSION,
   type ScanResult,
 } from "../scan";
 import { ocrImages } from "../ocr";
@@ -449,6 +450,15 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
       );
     }
 
+    // Record which scanner produced these results, so a later, better one can
+    // offer a re-scan instead of her never finding out it improved.
+    if (!failed.length && !abort.signal.aborted) {
+      try {
+        await db.kv.put({ key: "scannerVersion", value: SCANNER_VERSION });
+      } catch {
+        /* never fail a completed scan over bookkeeping */
+      }
+    }
     setRemaining(failed);
     if (abort.signal.aborted) {
       setError(

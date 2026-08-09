@@ -3,6 +3,9 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../db";
 import { exportEverythingZip } from "../exportCsv";
 import { attorneyEmailText, packetStats } from "../attorneyPacket";
+import { SCANNER_VERSION, SCANNER_NOTES } from "../scan";
+import { buildCoercionReport, type CoercionReport } from "../coercion";
+import { useEffect } from "react";
 import { QUICK_ACTIONS } from "../claude";
 import { handoff } from "../handoff";
 import DataSafety from "./DataSafety";
@@ -24,6 +27,27 @@ export default function Dashboard({ go, displayName, settings }: Props) {
   const [email, setEmail] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const grabLock = useRef(false);
+
+  /**
+   * The pattern, surfaced where she will actually meet it.
+   *
+   * "It wasn't you" was two taps into My case, which means the person who most
+   * needs it — someone still wondering whether she is overreacting — would
+   * never go looking. So when her own records show the cycle, Home says so
+   * plainly, the way a friend would.
+   *
+   * Computed off the render path so a large archive never delays the screen.
+   */
+  const [coercion, setCoercion] = useState<CoercionReport | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void buildCoercionReport().then((r) => {
+      if (!cancelled) setCoercion(r);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   /**
    * Everything, in one file, from the first thing she sees.
@@ -83,6 +107,7 @@ export default function Dashboard({ go, displayName, settings }: Props) {
     const savedScan = (await db.kv.get("scanInProgress"))?.value as
       | { remaining: number[]; total: number }
       | undefined;
+    const scannedWith = Number((await db.kv.get("scannerVersion"))?.value ?? 0);
     return {
       incidents,
       messages,
@@ -93,6 +118,8 @@ export default function Dashboard({ go, displayName, settings }: Props) {
       lastBackupAt: (lastBackup?.value as number | undefined) ?? null,
       scanLeft: savedScan?.remaining?.length ?? 0,
       scanTotal: savedScan?.total ?? 0,
+      // Only worth mentioning once she has actually scanned something.
+      scannerStale: scannedWith > 0 && scannedWith < SCANNER_VERSION,
     };
   });
 
@@ -245,6 +272,40 @@ export default function Dashboard({ go, displayName, settings }: Props) {
           }}
         />
       </div>
+
+      {!!coercion && coercion.cycles.length >= 2 && (
+        <div
+          className="panel"
+          style={{ borderColor: "var(--accent)", borderWidth: 2, cursor: "pointer" }}
+          onClick={() => go("notyou")}
+        >
+          <h2 style={{ marginTop: 0 }}>You are not imagining it</h2>
+          <p style={{ marginTop: 0 }}>
+            Your own records show it <strong>{coercion.cycles.length} times</strong>: something
+            happened, and then the apology came{" "}
+            {Math.round(
+              coercion.cycles.reduce((n, c) => n + c.daysLater, 0) / coercion.cycles.length
+            )}{" "}
+            days later, and then it happened again.
+          </p>
+          <p className="small" style={{ marginBottom: 8 }}>
+            That is a recognised pattern with a name, and it is the reason people stay far longer
+            than they would ever advise a friend to. If you have thought <em>maybe I'm
+            overreacting</em> — this is what the evidence you wrote down actually says.
+          </p>
+          <button className="btn secondary sm">Show me the pattern</button>
+        </div>
+      )}
+
+      {counts?.scannerStale && (
+        <div className="notice calm" style={{ cursor: "pointer" }} onClick={() => go("scan")}>
+          <strong>The scanner has improved since you last ran it.</strong> It{" "}
+          {SCANNER_NOTES[SCANNER_VERSION] ?? "finds more than it used to"}. Running it again over
+          the same messages would pick up what the older version missed. Nothing you have is
+          changed or removed — new findings are simply added, and anything already there stays
+          exactly as it is. Only worth doing when you have time and it suits you.
+        </div>
+      )}
 
       {!!counts?.scanLeft && (
         <div className="notice" style={{ cursor: "pointer" }} onClick={() => go("scan")}>
