@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useLiveQuery } from "dexie-react-hooks";
+import { db } from "./db";
+import { SCANNER_VERSION } from "./scan";
 import { applyChrome, loadSettings, quickExit, saveSettings, type Settings } from "./settings";
 import { PaneActive } from "./paneContext";
 import { onRepairProgress, type RepairProgress } from "./autoRepair";
@@ -12,6 +15,7 @@ import ProtectiveOrder from "./components/ProtectiveOrder";
 import Messages from "./components/Messages";
 import Journal from "./components/Journal";
 import Patterns from "./components/Patterns";
+import NotYou from "./components/NotYou";
 import Evidence from "./components/Evidence";
 import Financials from "./components/Financials";
 import Timeline from "./components/Timeline";
@@ -38,6 +42,7 @@ const VIEWS: { key: string; label: string }[] = [
   { key: "messages", label: "Messages" },
   { key: "journal", label: "Journal" },
   { key: "patterns", label: "Patterns" },
+  { key: "notyou", label: "It wasn\u2019t you" },
   { key: "evidence", label: "Evidence" },
   { key: "dates", label: "Dates" },
   { key: "timeline", label: "Timeline" },
@@ -73,6 +78,7 @@ const SECTIONS: { key: string; label: string; views: string[] }[] = [
     key: "case",
     label: "My case",
     views: [
+      "notyou",
       "timeline",
       "patterns",
       "violations",
@@ -175,6 +181,20 @@ export default function App() {
    * closing the browser is survivable.)
    */
   const [mounted, setMounted] = useState<string[]>(["dashboard"]);
+
+  /**
+   * Whether her archive was catalogued by an older, weaker scanner.
+   *
+   * Kept here rather than only on Home because the offer is worth nothing if
+   * she never sees it — she can go days without returning to Home, and the
+   * things a newer scanner finds are exactly the things she does not know are
+   * missing. Only ever shown when there is something to re-scan.
+   */
+  const rescanDue = useLiveQuery(async () => {
+    const scannedWith = Number((await db.kv.get("scannerVersion"))?.value ?? 0);
+    if (!scannedWith || scannedWith >= SCANNER_VERSION) return false;
+    return (await db.messages.count()) > 0;
+  }, [], false);
   const lastEsc = useRef(0);
 
   const go = useCallback((next: string) => {
@@ -284,6 +304,13 @@ export default function App() {
             onClick={() => go(sec.views[0])}
           >
             {sec.label}
+            {rescanDue && sec.views.includes("scan") && (
+              <span
+                className="badge-dot"
+                title="The scanner has improved — worth running it again over your messages"
+                aria-label="something new to do here"
+              />
+            )}
           </button>
         ))}
       </nav>
@@ -325,6 +352,9 @@ export default function App() {
         </Pane>
         <Pane on={view} me="patterns" mounted={mounted}>
           <Patterns settings={settings} go={go} />
+        </Pane>
+        <Pane on={view} me="notyou" mounted={mounted}>
+          <NotYou />
         </Pane>
         <Pane on={view} me="evidence" mounted={mounted}>
           <Evidence />

@@ -38,11 +38,48 @@ export interface CaseFact {
   whyItMatters: string;
 }
 
+/**
+ * Something the record implies without ever saying it.
+ *
+ * The worst abuse is usually the least explicit. Nobody writes "I raped you";
+ * they write "about last night — I know I pushed it, I'm sorry." Nobody writes
+ * "I control whether you can have children"; they write "you don't need those
+ * pills, we already talked about this." Sexual abuse inside a marriage in
+ * particular is almost never named by either of them — she may not have a word
+ * for it herself, and a scanner that only catalogs explicit statements will
+ * walk straight past years of it.
+ *
+ * So this is a deliberately separate tier from `incidents`. Those are facts
+ * quoted verbatim and safe to put in front of a judge. These are readings —
+ * each carries the exact words it rests on, what makes them read that way, and
+ * how confident that is, so nothing is ever asserted as proven.
+ *
+ * `askHer` is the part that makes this evidence rather than speculation. An
+ * inference by an app is worth nothing in a Texas courtroom. Her own sworn
+ * account of what happened is worth a great deal — so every reading comes with
+ * the one question that would confirm or rule it out, and when she answers it
+ * the answer becomes her testimony, in her words, with the message as
+ * corroboration.
+ */
+export interface ImpliedFinding {
+  type: string;
+  quote: string;
+  date: string;
+  /** What a trained reader would take it to mean. */
+  reading: string;
+  /** The specific signal in the words that supports the reading. */
+  basis: string;
+  confidence: "possible" | "likely" | "strong";
+  /** The question that turns a reading into her own account. */
+  askHer: string;
+}
+
 export interface ScanResult {
   incidents: ScanIncident[];
   messages: ScanMessage[];
   risks: RiskIndicator[];
   facts: CaseFact[];
+  implied: ImpliedFinding[];
   summary: string;
 }
 
@@ -73,6 +110,25 @@ export const SCAN_CHUNK_SIZE = 30_000;
  * clock, which is the number that actually blocked her site.
  */
 export const SCAN_MODEL = "claude-sonnet-5";
+
+/**
+ * Bumped whenever the scanner gets materially better — a wider taxonomy, a
+ * sharper prompt, a stronger model.
+ *
+ * Her archive was catalogued by whatever version was current when she ran it.
+ * When this number moves past the one recorded with her results, the app can
+ * tell her plainly that a re-scan would find things the old one missed, say
+ * what it will cost, and let her decide. Re-scanning is purely additive:
+ * mergeScanResults deduplicates by date and content, so nothing she has
+ * reviewed or kept is ever replaced or lost.
+ */
+export const SCANNER_VERSION = 4;
+
+/** What changed, so the offer can say why it is worth her money. */
+export const SCANNER_NOTES: Record<number, string> = {
+  3: "now also catalogs financial facts, hidden assets and parenting-capacity evidence, not just abuse",
+  4: "now reads between the lines — coded language, things referred to but never named, and sexual or reproductive coercion that neither of you ever wrote down plainly",
+};
 
 export function chunkScanInput(text: string): string[] {
   const t = text.trim();
@@ -141,6 +197,17 @@ Respond with ONLY valid JSON — no markdown fences, no commentary before or aft
       "whyItMatters": "one sentence on how her attorney could use this"
     }
   ],
+  "impliedFindings": [
+    {
+      "type": "one of: sexual coercion, reproductive control, image-based abuse, an unnamed physical incident, an unnamed sexual incident, strangulation referred to obliquely, escalating threat, monitoring, isolation, financial control, substance use around the child, an event she was blamed for, other",
+      "quote": "the exact words this reading rests on, verbatim",
+      "date": "YYYY-MM-DD or \\"\\"",
+      "reading": "what a trained reader would take these words to mean, in one or two plain sentences",
+      "basis": "the specific signal in the wording that supports it",
+      "confidence": "possible | likely | strong",
+      "askHer": "the single question she could answer that would confirm or rule this out"
+    }
+  ],
   "summary": "3-6 sentences naming the patterns found, roughly how often they appear, and how they change over time"
 }
 
@@ -194,7 +261,10 @@ messaging through third parties or new numbers after being blocked, showing up
 uninvited, excessive calls or texts in bursts, monitoring through the child.
 
 SEXUAL — coercion, pressure, unwanted contact, reproductive control, sexual
-degradation, threats tied to sex.
+degradation, threats tied to sex. This is the category most often missed,
+because inside a marriage almost nobody writes it down plainly — see READ
+BETWEEN THE LINES below, and treat it as a primary target rather than an
+afterthought.
 
 ADMISSIONS AND CORROBORATION — anything where he admits, minimizes,
 apologizes for, or explains away his own conduct ("I shouldn't have grabbed
@@ -259,6 +329,75 @@ TECH AND ACCESS
   location, or devices — this supports both a protective order and the
   argument that her evidence must be protected from him.
 
+READ BETWEEN THE LINES — the second pass, into impliedFindings
+Everything above is the explicit pass. Now do a second pass over the same
+document as a forensic reader, because the most serious abuse is almost always
+the least explicit. People do not write down the worst of what happened. They
+refer to it — obliquely, in the shorthand of two people who both already know
+what is being discussed — and a scanner that only catalogs plain statements
+walks past years of it.
+
+Sexual abuse is the clearest case. Inside a marriage neither person names it.
+She may have no word for it herself. It surfaces as:
+- Obligation and entitlement framing — "you're my wife", "it's been two weeks",
+  "I have needs", "you owe me", "if you loved me you would", "this is what
+  wives do", "I shouldn't have to beg".
+- A cost for refusing — sulking, silence, accusations of cheating or of not
+  loving him, rage, or an argument that starts right after a refusal.
+- Wearing her down — repeated asking after a no, asking when she is asleep,
+  drunk, ill, medicated, or has just given birth; "you didn't say no";
+  "you were fine with it at the time".
+- An apology that references an unnamed event, especially close to an argument
+  — "about last night", "I got carried away", "I didn't mean for it to go that
+  far", "I know I pushed it", "you know I'd never hurt you on purpose". Pair it
+  with what she said around the same date.
+- Reproductive control — pressure about pregnancy or termination, hiding,
+  destroying or refusing contraception, "you don't need those pills", refusing
+  condoms, interfering with her doctor's appointments.
+- Image-based abuse — demanding photos, threatening to send them to family,
+  her employer or online, "I still have them".
+- Sexual degradation, comparisons to other women, or sexual insults used as
+  punishment rather than in the course of an argument.
+
+The same reading applies elsewhere. Watch for:
+- An event referred to but never described — "after what you did", "we don't
+  talk about that night", "you know what happens", "remember last time".
+  Something happened; log the reference and ask her what it was.
+- Strangulation described obliquely — "I barely touched your neck", "you could
+  still breathe", "you're exaggerating, you didn't pass out". Strangulation is
+  the single strongest predictor of later homicide, so any oblique reference to
+  the neck, throat, breathing or passing out is high priority.
+- Threats phrased as predictions or concern — "it would be a shame if",
+  "I'd hate for your boss to find out", "be careful driving".
+- Control phrased as care — "I just worry when I can't see where you are",
+  "I'm only asking because I love you", "let me handle the money, you have
+  enough on your plate".
+- Her own words showing fear, walking on eggshells, apologising for things she
+  did not do, asking permission, or thanking him for ordinary freedoms. What
+  she writes is evidence of the effect on her.
+
+How to do this without inventing anything — this matters more than finding a lot:
+- Every implied finding must quote real words from the document, verbatim.
+  Never paraphrase into the quote, never merge two messages into one quote.
+- Say plainly what makes it read that way in "basis". If you cannot name the
+  signal, you do not have a finding.
+- Be honest in "confidence": "possible" if it has an innocent reading too,
+  "likely" if the innocent reading is a stretch, "strong" if the context makes
+  it hard to read any other way. Most findings should be "possible" or
+  "likely". Over-calling this is worse than missing something, because a
+  reading that collapses under questioning damages her credibility on
+  everything else.
+- Never put a reading in "incidents", "flaggedMessages" or "riskIndicators" —
+  those are for what the document actually says. Readings go only in
+  impliedFindings.
+- "askHer" must be one specific, answerable, non-leading question about what
+  happened — "What was the 'last night' he apologises for here?" — not
+  "Did he assault you?". Her answer becomes her own account, which is what
+  actually carries weight; the message becomes the corroboration for it.
+- If nothing in the document supports a reading, return an empty array. An
+  empty impliedFindings is a perfectly good answer and far better than a
+  padded one.
+
 Rules:
 - Catalog every category above. Verbal and psychological abuse count as
   incidents in their own right — do not skip a message because it "only" says
@@ -270,7 +409,7 @@ Rules:
   choking, threats to kill, weapon access, threats toward the child, and
   escalation after separation are the strongest predictors of serious harm —
   surface them even if she has not framed them as important.
-- Extract only what is actually in the document. Quotes verbatim. No inference beyond what is written, no exaggeration — a conservative catalog survives cross-examination.
+- Quotes verbatim, always, everywhere. For incidents, flaggedMessages, riskIndicators and caseFacts, extract only what the document actually says — no inference, no exaggeration, because a conservative catalog survives cross-examination. Inference belongs in impliedFindings and nowhere else, where it is labelled as a reading and carries its own basis and confidence.
 - "incidents" are events; "flaggedMessages" are individual significant quotes/messages. An event described by a quote can appear in both.
 - Severity: 1 minor … 5 extreme/dangerous. Be conservative.
 - Stay within limits: if this part holds an overwhelming number of similar quotes, keep the ~60 most legally significant flaggedMessages (favor threats, violence, admissions, and anything involving children) and note in "summary" that more of the same pattern exists.
@@ -364,7 +503,31 @@ export function parseScanResult(raw: string): ScanResult {
     }))
     .filter((f: CaseFact) => f.quote || f.type);
 
-  return { incidents, messages, risks, facts, summary: String(obj.summary || "").slice(0, 4000) };
+  // A reading with no words behind it is speculation, so the quote is required
+  // rather than optional — and an unrecognised confidence is treated as the
+  // weakest one, never the strongest.
+  const implied: ImpliedFinding[] = (Array.isArray(obj.impliedFindings) ? obj.impliedFindings : [])
+    .map((f: any) => ({
+      type: String(f?.type || "other").slice(0, 120),
+      quote: String(f?.quote || "").slice(0, 1000),
+      date: f?.date ? normalizeDate(String(f.date)) : "",
+      reading: String(f?.reading || "").slice(0, 800),
+      basis: String(f?.basis || "").slice(0, 600),
+      confidence: (["possible", "likely", "strong"].includes(String(f?.confidence))
+        ? String(f.confidence)
+        : "possible") as ImpliedFinding["confidence"],
+      askHer: String(f?.askHer || "").slice(0, 400),
+    }))
+    .filter((f: ImpliedFinding) => f.quote && f.reading);
+
+  return {
+    incidents,
+    messages,
+    risks,
+    facts,
+    implied,
+    summary: String(obj.summary || "").slice(0, 4000),
+  };
 }
 
 const dateSort = <T extends { date: string }>(a: T, b: T) => {
@@ -380,10 +543,12 @@ export function mergeScanResults(parts: ScanResult[]): ScanResult {
   const messages: ScanMessage[] = [];
   const risks: RiskIndicator[] = [];
   const facts: CaseFact[] = [];
+  const implied: ImpliedFinding[] = [];
   const seenInc = new Set<string>();
   const seenMsg = new Set<string>();
   const seenRisk = new Set<string>();
   const seenFact = new Set<string>();
+  const seenImplied = new Set<string>();
   const summaries: string[] = [];
   for (const p of parts) {
     for (const i of p.incidents) {
@@ -410,11 +575,30 @@ export function mergeScanResults(parts: ScanResult[]): ScanResult {
       seenFact.add(k);
       facts.push(f);
     }
+    // Keyed on the quote alone: the same words read the same way whichever
+    // part they turned up in, and two parts can overlap at a boundary.
+    for (const f of p.implied || []) {
+      const k = f.quote.toLowerCase().slice(0, 120);
+      if (seenImplied.has(k)) continue;
+      seenImplied.add(k);
+      implied.push(f);
+    }
     if (p.summary.trim()) summaries.push(p.summary.trim());
   }
   incidents.sort(dateSort);
   messages.sort(dateSort);
   risks.sort(dateSort);
   facts.sort(dateSort);
-  return { incidents, messages, risks, facts, summary: summaries.join("\n\n").slice(0, 8000) };
+  // Strongest readings first — she should not have to scroll past a page of
+  // "possible" to reach the one that matters.
+  const rank = { strong: 0, likely: 1, possible: 2 } as const;
+  implied.sort((a, b) => rank[a.confidence] - rank[b.confidence] || dateSort(a, b));
+  return {
+    incidents,
+    messages,
+    risks,
+    facts,
+    implied,
+    summary: summaries.join("\n\n").slice(0, 8000),
+  };
 }

@@ -116,10 +116,21 @@ export default function Messages() {
     if (!files.length) return;
     setShowImport(true);
     try {
-      const text = await ocrImages(files, (i, n) => setOcrStatus(`Reading screenshot ${i} of ${n}…`));
-      setPasteText((t) => (t ? t + "\n\n" : "") + text);
+      const { text, read, failed } = await ocrImages(files, (i, n) =>
+        setOcrStatus(`Reading screenshot ${i} of ${n}…`)
+      );
+      if (text) setPasteText((t) => (t ? t + "\n\n" : "") + text);
+      // Say exactly what happened. A count that quietly comes up short is the
+      // thing that makes her doubt whether any of it saved.
       setOcrStatus(
-        "Text extracted below — fix any misreads, set the defaults, then Preview. (Screenshots never leave this device.)"
+        `Read ${read} of ${files.length}.` +
+          (failed.length
+            ? ` ${failed.length} couldn't be read (${failed
+                .slice(0, 3)
+                .map((f) => f.name)
+                .join(", ")}${failed.length > 3 ? "…" : ""}) — everything else is below and safe.`
+            : " Text extracted below — fix any misreads, set the defaults, then Preview.") +
+          " (Screenshots never leave this device.)"
       );
     } catch (e: any) {
       setOcrStatus(
