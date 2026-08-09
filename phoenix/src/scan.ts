@@ -61,7 +61,18 @@ export interface ScanResult {
 export const SCAN_CHUNK_SIZE = 30_000;
 
 /** The model every deep scan runs on, regardless of the chat model picker. */
-export const SCAN_MODEL = "claude-opus-5";
+/**
+ * Deep Scan reads messages and returns JSON. It is extraction, not legal
+ * reasoning — the Advocate keeps Opus for that, where it matters.
+ *
+ * Opus at high effort held a serverless function open for a minute or more per
+ * part, and a scan is over a hundred parts back to back. Netlify bills the
+ * whole time a function is alive, so the thinking time was being paid for
+ * twice: once to Anthropic in tokens, once to Netlify in runtime. Sonnet does
+ * this job for roughly a third of the token cost and a fraction of the wall
+ * clock, which is the number that actually blocked her site.
+ */
+export const SCAN_MODEL = "claude-sonnet-5";
 
 export function chunkScanInput(text: string): string[] {
   const t = text.trim();

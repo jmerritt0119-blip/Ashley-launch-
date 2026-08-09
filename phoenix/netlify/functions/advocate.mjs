@@ -111,7 +111,7 @@ export default async (req) => {
             system,
             messages: convo,
             thinking: { type: 'adaptive' },
-            output_config: { effort: isChat ? 'xhigh' : 'high' },
+            output_config: { effort: isChat ? 'xhigh' : 'medium' },
             ...(TOOLS ? { tools: TOOLS } : {}),
           };
           let run;
