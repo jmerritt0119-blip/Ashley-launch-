@@ -93,16 +93,23 @@ export default function DataSafety({ compact = false }: { compact?: boolean }) {
     };
   }, [refresh]);
 
-  const turnOnProtection = async () => {
-    setBusy("protect");
-    const ok = await ensurePersistence();
-    setNote(
-      ok
-        ? "Protected. This browser will not clear your case to free up space."
-        : "This browser wouldn't grant permanent storage. Install the app (below) and keep a backup — that covers it."
-    );
+  /**
+   * Asks the browser to protect her storage — quietly, and only as a follow-up.
+   *
+   * This used to be a button of its own, and it was a button that could not
+   * succeed. Safari does not grant persistence on request at all, and Chrome
+   * only grants it once the site is installed or heavily used. So the common
+   * outcome of pressing "Turn on permanent storage" was being told it did not
+   * work, which reads as the app being broken when it is the browser behaving
+   * exactly as designed.
+   *
+   * The thing that actually works is installing to the Home Screen, so that is
+   * the only action offered now. This runs silently after an install, when the
+   * browser will usually say yes.
+   */
+  const askForPersistence = async () => {
+    await ensurePersistence();
     await refresh();
-    setBusy("");
   };
 
   const backupNow = async () => {
@@ -136,8 +143,10 @@ export default function DataSafety({ compact = false }: { compact?: boolean }) {
     setBusy("");
   };
 
-  const atRisk = report && !report.persisted;
-  const iosNotInstalled = report?.isIos && !report.installed;
+  // "Safe" means the browser will not quietly bin her case. Installing to the
+  // home screen achieves that on every platform; a granted persistence flag
+  // achieves it on the ones that hand it out. Either is enough.
+  const safe = !!report && (report.installed || report.persisted);
 
   return (
     <div className="panel">
@@ -166,59 +175,49 @@ export default function DataSafety({ compact = false }: { compact?: boolean }) {
         </div>
       )}
 
-      <ul className="small" style={{ lineHeight: 1.8, paddingLeft: 18, margin: "6px 0 12px" }}>
-        <li>
-          {report?.persisted ? "✅" : "⚠️"} <strong>Permanent storage:</strong>{" "}
-          {report?.persisted
-            ? "on — this browser will not clear your case to free up space."
-            : "not granted yet. Turn it on below."}
-        </li>
-        <li>
-          {report?.installed ? "✅" : iosNotInstalled ? "⚠️" : "○"} <strong>Installed as an app:</strong>{" "}
-          {report?.installed
-            ? "yes."
-            : iosNotInstalled
-              ? "no — and on an iPhone that matters. Safari erases a website's saved data after 7 days of not opening it. Once it's on your Home Screen, that rule no longer applies."
-              : "not yet. Installing puts it on your home screen and makes it open like any other app."}
-        </li>
-        <li>
-          {snaps.length ? "✅" : "○"} <strong>Restore points on this device:</strong>{" "}
-          {snaps.length
-            ? `${snaps.length}, most recent ${when(snaps[0].createdAt)}.`
-            : "none yet — one is made automatically as soon as you add something."}
-        </li>
-        {report?.usedMb != null && (
-          <li className="muted">
-            Using {report.usedMb.toLocaleString()} MB
-            {report.quotaMb ? ` of about ${report.quotaMb.toLocaleString()} MB available.` : "."}
-          </li>
-        )}
-      </ul>
+      {/* One answer, in one line, before any detail. */}
+      {report && (safe ? (
+        <div className="notice calm">
+          <strong>Yes — your case is safe on this device.</strong> It's on your home screen, and
+          nothing here gets cleared to free up space.
+        </div>
+      ) : (
+        <div className="notice">
+          <strong>There's one thing to do, and it takes about ten seconds.</strong>
+          <p className="small" style={{ margin: "6px 0" }}>
+            Right now Phoenix is running as a website, and phones delete website data to save
+            space. {report.isIos
+              ? "On an iPhone that's automatic: Safari erases it after 7 days of not opening it."
+              : "Your phone can clear it at any point when storage runs low."}{" "}
+            Putting it on your home screen stops that completely — it's the same app, it just stops
+            being treated as a throwaway web page.
+          </p>
+          {installable ? (
+            <button
+              className="btn"
+              onClick={async () => {
+                const ok = await promptInstall();
+                setInstallable(canPromptInstall());
+                if (ok) {
+                  setNote("Done. Open it from your home screen from now on.");
+                  // Browsers that refuse persistence to a plain website will
+                  // usually grant it once installed, so ask again now.
+                  await askForPersistence();
+                }
+                await refresh();
+              }}
+            >
+              Put Phoenix on my home screen
+            </button>
+          ) : (
+            <button className="btn" onClick={() => setShowIos(!showIos)}>
+              Show me how — {report.isIos ? "iPhone" : "this device"}
+            </button>
+          )}
+        </div>
+      ))}
 
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {atRisk && (
-          <button className="btn" onClick={() => void turnOnProtection()} disabled={busy === "protect"}>
-            {busy === "protect" ? "Asking…" : "Turn on permanent storage"}
-          </button>
-        )}
-        {installable && !report?.installed && (
-          <button
-            className="btn"
-            onClick={async () => {
-              const ok = await promptInstall();
-              setInstallable(canPromptInstall());
-              if (ok) setNote("Installed. Open it from your home screen from now on.");
-              await refresh();
-            }}
-          >
-            Install this app
-          </button>
-        )}
-        {iosNotInstalled && !installable && (
-          <button className="btn" onClick={() => setShowIos(!showIos)}>
-            How to install on iPhone
-          </button>
-        )}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
         <button className="btn secondary" onClick={() => void backupNow()} disabled={busy === "snap"}>
           {busy === "snap" ? "Saving…" : "Make a restore point now"}
         </button>
@@ -231,6 +230,37 @@ export default function DataSafety({ compact = false }: { compact?: boolean }) {
           </button>
         )}
       </div>
+
+      {/* The detail is still here for anyone who wants it, just not in her way. */}
+      <details style={{ marginTop: 12 }}>
+        <summary style={{ cursor: "pointer" }} className="small muted">
+          The details
+        </summary>
+        <ul className="small" style={{ lineHeight: 1.8, paddingLeft: 18, margin: "6px 0 0" }}>
+          <li>
+            {report?.installed ? "✅" : "○"} <strong>On the home screen:</strong>{" "}
+            {report?.installed ? "yes." : "not yet."}
+          </li>
+          <li>
+            {report?.persisted ? "✅" : "○"} <strong>Storage marked permanent:</strong>{" "}
+            {report?.persisted
+              ? "yes."
+              : "not yet — most browsers only grant this once the app is on the home screen, and it's granted automatically then."}
+          </li>
+          <li>
+            {snaps.length ? "✅" : "○"} <strong>Restore points on this device:</strong>{" "}
+            {snaps.length
+              ? `${snaps.length}, most recent ${when(snaps[0].createdAt)}.`
+              : "none yet — one is made automatically as soon as you add something."}
+          </li>
+          {report?.usedMb != null && (
+            <li className="muted">
+              Using {report.usedMb.toLocaleString()} MB
+              {report.quotaMb ? ` of about ${report.quotaMb.toLocaleString()} MB available.` : "."}
+            </li>
+          )}
+        </ul>
+      </details>
 
       {showIos && (
         <div className="notice calm" style={{ marginTop: 10 }}>

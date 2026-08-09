@@ -110,6 +110,9 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
   // double tap can never file the same account twice.
   const savingImplied = useRef<Set<number>>(new Set());
   const [dismissed, setDismissed] = useState<Set<number>>(new Set());
+  /** How far through the parts she is, and roughly how much longer. */
+  const [pct, setPct] = useState<number | null>(null);
+  const [eta, setEta] = useState("");
   const [added, setAdded] = useState<string | null>(null);
   const [remaining, setRemaining] = useState<number[]>([]);
   const [loadedNote, setLoadedNote] = useState<string | null>(null);
@@ -382,7 +385,9 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     // the archive by code before the AI reads a single line.
     if (!resume) {
       docRef.current = chunks.join("\n");
-      setProgress("Saving every message to your archive…");
+      setPct(null);
+    setEta("");
+    setProgress("Saving every message to your archive…");
       try {
         const n = await archiveCsv(docOverride ?? text);
         if (n) setProgress(`${n.toLocaleString()} messages saved. Now reading them…`);
@@ -394,6 +399,34 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     abortRef.current = abort;
     const failed: number[] = [];
     const parts = partsRef.current;
+
+    // A hundred and twenty-five parts is a long time to stare at a screen with
+    // no idea whether it is working. She gets a bar, a real time estimate from
+    // how long her own parts are actually taking, and a running count of what
+    // has been found — so a slow scan reads as slow rather than as broken.
+    const startedAt = Date.now();
+    setPct(0);
+    setEta("");
+
+    /** One request for one piece of text. Returns null rather than throwing. */
+    const scanPiece = async (piece: string, index: number, total: number) => {
+      try {
+        const out = await streamAdvocate({
+          connection: settings.connection,
+          apiKey: settings.apiKey,
+          model: SCAN_MODEL,
+          history: [{ role: "user", content: buildScanPrompt(piece, { index, total }) }],
+          caseContext: null,
+          webSearch: false,
+          mode: "scan",
+          signal: abort.signal,
+          onDelta: () => {},
+        });
+        return parseScanResult(out);
+      } catch {
+        return null;
+      }
+    };
 
     for (let n = 0; n < indices.length; n++) {
       const idx = indices[n];
@@ -407,9 +440,23 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
         parts.length > 0
           ? ` ${found.incidents.length} incidents & ${found.messages.length} messages found so far.`
           : "";
+      setPct(Math.round((n / indices.length) * 100));
+      if (n > 0) {
+        const perPart = (Date.now() - startedAt) / n;
+        const leftMs = perPart * (indices.length - n);
+        const mins = Math.round(leftMs / 60000);
+        setEta(
+          leftMs < 90_000
+            ? "less than two minutes left"
+            : `about ${mins} minute${mins === 1 ? "" : "s"} left`
+        );
+      }
       setProgress(`The Advocate is reading ${label}…${foundNote}`);
       let ok = false;
-      const backoff = [2000, 5000];
+      // Longer than it looks like it needs to be: the common cause of a run of
+      // failures is the model being overloaded, and retrying hard makes that
+      // worse while billing for every attempt.
+      const backoff = [3000, 12000];
       // Whatever the last attempt managed to send, kept so a part that never
       // completes can still be salvaged rather than thrown away.
       let lastPartial = "";
@@ -435,7 +482,7 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
             onDelta: (d) => {
               acc += d;
               if (acc.length > lastPartial.length) lastPartial = acc;
-              setProgress(`Cataloging ${label}… (${acc.length.toLocaleString()} characters)${foundNote}`);
+              setProgress(`Cataloging ${label}…${foundNote}`);
             },
           });
           parts.push(parseScanResult(full || acc));
@@ -467,6 +514,28 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
       }
       // Reported as incomplete either way, so she can top it up — but the
       // evidence that did come back is kept rather than thrown away.
+      // Last resort before giving up on a part: cut it in half.
+      //
+      // A part that cannot finish inside the platform's execution limit fails
+      // identically however many times it is retried — more attempts just cost
+      // more money for the same nothing. Two smaller pieces each have half the
+      // work to do, and in practice both complete.
+      if (!ok && !abort.signal.aborted && chunks[idx].length > 6000) {
+        setProgress(`${label} was too big to finish — splitting it and trying again…`);
+        const mid = chunks[idx].lastIndexOf("\n", Math.floor(chunks[idx].length / 2)) + 1 ||
+          Math.floor(chunks[idx].length / 2);
+        const halves = [chunks[idx].slice(0, mid), chunks[idx].slice(mid)].filter((h) => h.trim());
+        let rescued = 0;
+        for (const h of halves) {
+          if (abort.signal.aborted) break;
+          const r = await scanPiece(h, idx + 1, chunks.length);
+          if (r) {
+            parts.push(r);
+            rescued++;
+          }
+        }
+        if (rescued === halves.length) ok = true;
+      }
       if (!ok && !abort.signal.aborted) failed.push(idx);
       if (parts.length) applyMerged(mergeScanResults(parts));
 
@@ -675,8 +744,11 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
             {busy ? "Scanning…" : "Scan & catalog"}
           </button>
           {busy && (
-            <button className="btn ghost" onClick={stop}>
-              Stop (keeps what's found)
+            // Solid, not ghost. A faded button reads as decoration, and the one
+            // control that lets her stop a twenty-minute job needs to look like
+            // something she is allowed to press.
+            <button className="btn secondary" onClick={stop}>
+              Stop — keep what's found so far
             </button>
           )}
           {!busy && remaining.length > 0 && (
@@ -715,6 +787,38 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
             }}
           />
         </div>
+        {pct !== null && busy && (
+          <div style={{ marginTop: 10 }}>
+            <div
+              role="progressbar"
+              aria-valuenow={pct}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              style={{
+                height: 10,
+                borderRadius: 999,
+                background: "var(--line)",
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  width: `${Math.max(2, pct)}%`,
+                  height: "100%",
+                  background: "var(--accent-grad)",
+                  transition: "width 0.4s ease",
+                }}
+              />
+            </div>
+            <p className="small" style={{ margin: "6px 0 0", fontWeight: 600 }}>
+              {pct}% done{eta ? ` · ${eta}` : ""}
+            </p>
+            <p className="muted small" style={{ margin: "2px 0 0" }}>
+              You can leave this page or close the app — everything found so far is saved, and it
+              picks up where it stopped.
+            </p>
+          </div>
+        )}
         {progress && <p className="muted small" style={{ marginTop: 8 }}>{progress}</p>}
         {archived > 0 && (
           <div className="notice calm" style={{ marginTop: 10 }}>
