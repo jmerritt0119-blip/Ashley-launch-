@@ -50,6 +50,64 @@ const VIEWS: { key: string; label: string }[] = [
 ];
 
 /**
+ * Five places instead of twenty.
+ *
+ * The flat nav had twenty buttons and ran off the side of the screen — "Dates"
+ * was clipped and six more sat past the edge, including the safety plan. Asking
+ * a frightened woman to scan twenty labels to find anything is a design that
+ * serves the filing cabinet, not her.
+ *
+ * Nothing is removed or renamed; the same views are grouped by what she came
+ * to do. Opening a section shows its pages beneath, so anything is at most two
+ * taps away and the first tap is always one of five obvious choices.
+ */
+const SECTIONS: { key: string; label: string; views: string[] }[] = [
+  { key: "home", label: "Home", views: ["dashboard"] },
+  { key: "ask", label: "Ask the AI", views: ["advocate"] },
+  {
+    key: "add",
+    label: "Add evidence",
+    views: ["scan", "incidents", "messages", "evidence", "journal"],
+  },
+  {
+    key: "case",
+    label: "My case",
+    views: [
+      "timeline",
+      "patterns",
+      "violations",
+      "custody",
+      "protective",
+      "dates",
+      "financials",
+      "documents",
+    ],
+  },
+  {
+    key: "handoff",
+    label: "For my attorney",
+    views: ["attorney", "packet"],
+  },
+  { key: "help", label: "Safety & help", views: ["safety", "resources"] },
+];
+
+const LABELS: Record<string, string> = Object.fromEntries(
+  VIEWS.map((v) => [v.key, v.label])
+);
+
+/**
+ * Which section a view belongs to, so the right one stays lit.
+ *
+ * Returns "" for the views that live in the top bar (search, settings) rather
+ * than falling back to Home — otherwise the nav highlights Home while she is
+ * plainly looking at Settings, which is the app telling her something untrue
+ * about where she is.
+ */
+function sectionOf(view: string): string {
+  return SECTIONS.find((s) => s.views.includes(view))?.key ?? "";
+}
+
+/**
  * Says what the app is doing while it tidies a duplicated archive.
  *
  * Measured at roughly 80 seconds on an archive of 119,600 rows. Eighty seconds
@@ -93,7 +151,11 @@ function Pane({
   const active = on === me;
   return (
     <PaneActive.Provider value={active}>
-      <div style={active ? undefined : { display: "none" }} aria-hidden={!active}>
+      <div
+        data-view={me}
+        style={active ? undefined : { display: "none" }}
+        aria-hidden={!active}
+      >
         {children}
       </div>
     </PaneActive.Provider>
@@ -194,8 +256,11 @@ export default function App() {
           {!settings.discreet && <span className="sub">case builder for survivors</span>}
         </div>
         <div className="spacer" />
-        <button className="lock-btn" onClick={() => setView("search")} title="Search the case file">
+        <button className="lock-btn" onClick={() => go("search")} title="Search the case file">
           🔍
+        </button>
+        <button className="lock-btn" onClick={() => go("settings")} title="Settings">
+          ⚙
         </button>
         {settings.pinHash && (
           <button className="lock-btn" onClick={() => setLocked(true)} title="Lock the app">
@@ -212,12 +277,28 @@ export default function App() {
       </header>
 
       <nav className="nav no-print">
-        {VIEWS.map((v) => (
-          <button key={v.key} className={view === v.key ? "active" : ""} onClick={() => go(v.key)}>
-            {v.label}
+        {SECTIONS.map((sec) => (
+          <button
+            key={sec.key}
+            className={sectionOf(view) === sec.key ? "active" : ""}
+            onClick={() => go(sec.views[0])}
+          >
+            {sec.label}
           </button>
         ))}
       </nav>
+
+      {/* The pages inside the open section. Hidden for sections with only one,
+          so Home and Ask stay as quiet as they were. */}
+      {(SECTIONS.find((s) => s.key === sectionOf(view))?.views.length ?? 0) > 1 && (
+        <nav className="nav subnav no-print">
+          {SECTIONS.find((s) => s.key === sectionOf(view))!.views.map((k) => (
+            <button key={k} className={view === k ? "active" : ""} onClick={() => go(k)}>
+              {LABELS[k]}
+            </button>
+          ))}
+        </nav>
+      )}
 
       <main className="main">
         <RepairBanner />
