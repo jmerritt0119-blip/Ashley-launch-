@@ -89,13 +89,23 @@ export interface ScanResult {
 /**
  * How much of her archive goes into one Deep Scan request.
  *
- * Was 60,000. That is roughly 15,000 tokens in, and the JSON catalog it has to
- * produce comes back out of a 16,000-token budget — so a dense stretch of
- * messages could exceed the ceiling every single time, which no amount of
- * retrying fixes. Smaller parts finish faster, leave real headroom, and turn a
- * failure into one lost part instead of a lost archive.
+ * 60,000, then 30,000, now 8,000 — and the reason it kept having to come down
+ * is that the binding limit is not the model's context, it is how long the
+ * serverless function is allowed to stay alive.
+ *
+ * A part is only as slow as the JSON it has to WRITE. A sparse stretch of
+ * messages produces a short catalog and finishes easily; a dense one — which
+ * in her archive means the worst weeks, the parts that matter most — produces
+ * thousands of tokens of findings and gets killed mid-stream. That is why some
+ * parts always worked and others always failed however many times they were
+ * retried, and why turning off thinking helped but did not fix it.
+ *
+ * Eight thousand characters is roughly two thousand tokens in, and no part can
+ * then produce enough output to run past the limit. It means many more parts,
+ * but each one completes, each one is saved the moment it does, and a scan that
+ * takes longer and finishes beats a fast one that dies on the evidence.
  */
-export const SCAN_CHUNK_SIZE = 30_000;
+export const SCAN_CHUNK_SIZE = 8_000;
 
 /** The model every deep scan runs on, regardless of the chat model picker. */
 /**
@@ -208,7 +218,7 @@ Respond with ONLY valid JSON — no markdown fences, no commentary before or aft
       "askHer": "the single question she could answer that would confirm or rule this out"
     }
   ],
-  "summary": "3-6 sentences naming the patterns found, roughly how often they appear, and how they change over time"
+  "summary": "1-3 sentences naming the patterns found in this part"
 }
 
 Allowed categories: ${JSON.stringify(INCIDENT_CATEGORIES)}
@@ -412,7 +422,7 @@ Rules:
 - Quotes verbatim, always, everywhere. For incidents, flaggedMessages, riskIndicators and caseFacts, extract only what the document actually says — no inference, no exaggeration, because a conservative catalog survives cross-examination. Inference belongs in impliedFindings and nowhere else, where it is labelled as a reading and carries its own basis and confidence.
 - "incidents" are events; "flaggedMessages" are individual significant quotes/messages. An event described by a quote can appear in both.
 - Severity: 1 minor … 5 extreme/dangerous. Be conservative.
-- Stay within limits: if this part holds an overwhelming number of similar quotes, keep the ~60 most legally significant flaggedMessages (favor threats, violence, admissions, and anything involving children) and note in "summary" that more of the same pattern exists.
+- Stay within limits, and be strict about it: keep at most 12 flaggedMessages and 6 incidents from this part — the most legally significant ones (favor threats, violence, admissions, and anything involving children) — and note in "summary" that more of the same pattern exists. A part is small; a catalog that runs long is one that never gets delivered at all.
 - If the document contains nothing relevant, return empty arrays and say so in "summary".
 
 DOCUMENT:
