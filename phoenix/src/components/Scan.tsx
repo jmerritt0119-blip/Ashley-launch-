@@ -12,7 +12,7 @@ import {
   SCANNER_VERSION,
   type ScanResult,
 } from "../scan";
-import { ocrImages } from "../ocr";
+import { readAnyFiles } from "../readAnyFile";
 import { messagesFromCsv, type ParsedMessage } from "../parseMessages";
 import type { Settings } from "../settings";
 import { recordImport, sha256Hex } from "../integrity";
@@ -110,6 +110,9 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
   // double tap can never file the same account twice.
   const savingImplied = useRef<Set<number>>(new Set());
   const [dismissed, setDismissed] = useState<Set<number>>(new Set());
+  /** How far through the parts she is, and roughly how much longer. */
+  const [pct, setPct] = useState<number | null>(null);
+  const [eta, setEta] = useState("");
   const [added, setAdded] = useState<string | null>(null);
   const [remaining, setRemaining] = useState<number[]>([]);
   const [loadedNote, setLoadedNote] = useState<string | null>(null);
@@ -236,54 +239,33 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
   const onFiles = async (files: File[]) => {
     if (!files.length) return;
     setError(null);
-    const images = files.filter(
-      (f) => f.type.startsWith("image/") || /\.(png|jpe?g|gif|webp|heic|heif|bmp)$/i.test(f.name)
-    );
-    const rest = files.filter((f) => !images.includes(f));
-
-    const texts: string[] = [];
-    const unreadable: string[] = [];
-
-    if (images.length) {
-      setBusy(true);
-      try {
-        const { text: ocrText, failed } = await ocrImages(images, (i, n) =>
-          setProgress(`Reading picture ${i} of ${n}…`)
-        );
-        // Keep every picture that worked. Naming only the ones that didn't is
-        // the difference between "80 of 100 went in" and losing the batch.
-        if (ocrText) texts.push(ocrText);
-        for (const f of failed) unreadable.push(`${f.name} (${f.reason})`);
-      } catch (e: any) {
-        unreadable.push(
-          `${images.length} picture${images.length === 1 ? "" : "s"} (${e?.message || "couldn't be read"})`
-        );
-      } finally {
-        setBusy(false);
-        setProgress("");
-      }
+    setBusy(true);
+    let out;
+    try {
+      out = await readAnyFiles(files, setProgress);
+    } catch (e: any) {
+      setBusy(false);
+      setProgress("");
+      setError("Couldn't read those files: " + (e?.message || "unknown error"));
+      return;
     }
+    setBusy(false);
+    setProgress("");
 
-    for (const f of rest) {
-      const t = await f.text();
-      if (looksBinary(t)) unreadable.push(f.name);
-      else if (t.trim()) texts.push(t);
-    }
-
-    if (unreadable.length) {
+    if (out.failed.length) {
       setError(
-        `Couldn't read ${unreadable.join(", ")}. PDFs and Word files can't be read directly yet — ` +
-          `open it, screenshot it, and drop the screenshot here instead. Everything else you gave me went in fine.`
+        `Read ${out.read.length} of ${files.length}. ` +
+          `Couldn't read: ${out.failed.map((f) => `${f.name} (${f.reason})`).join("; ")}. ` +
+          `Everything else went in fine.`
       );
     }
 
-    const combined = [text.trim(), ...texts].filter(Boolean).join("\n\n");
+    const combined = [text.trim(), out.text].filter(Boolean).join("\n\n");
     if (!combined) return;
     if (combined.length > 300_000) {
-      // Giant upload: don't render it into the textarea — start scanning it.
       setText("");
       setLoadedNote(
-        `File loaded — ${combined.length.toLocaleString()} characters (kept out of the text box to stay fast).`
+        `Loaded — ${combined.length.toLocaleString()} characters (kept out of the text box to stay fast).`
       );
       void run(false, combined);
     } else {
@@ -296,13 +278,11 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     setError(null);
     setBusy(true);
     try {
-      const { text: extracted, read, failed } = await ocrImages(files, (i, n) =>
-        setProgress(`Reading screenshot ${i} of ${n}…`)
-      );
+      const { text: extracted, read, failed } = await readAnyFiles(files, setProgress);
       if (extracted) setText((t) => (t ? t + "\n\n" : "") + extracted);
       if (failed.length) {
         setError(
-          `Read ${read} of ${files.length} — those are in the box below and safe. ` +
+          `Read ${read.length} of ${files.length} — those are in the box below and safe. ` +
             `${failed.length} couldn't be read: ${failed.slice(0, 4).map((f) => f.name).join(", ")}` +
             `${failed.length > 4 ? `, and ${failed.length - 4} more` : ""}. Try those again on their own.`
         );
@@ -382,7 +362,9 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     // the archive by code before the AI reads a single line.
     if (!resume) {
       docRef.current = chunks.join("\n");
-      setProgress("Saving every message to your archive…");
+      setPct(null);
+    setEta("");
+    setProgress("Saving every message to your archive…");
       try {
         const n = await archiveCsv(docOverride ?? text);
         if (n) setProgress(`${n.toLocaleString()} messages saved. Now reading them…`);
@@ -394,6 +376,34 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     abortRef.current = abort;
     const failed: number[] = [];
     const parts = partsRef.current;
+
+    // A hundred and twenty-five parts is a long time to stare at a screen with
+    // no idea whether it is working. She gets a bar, a real time estimate from
+    // how long her own parts are actually taking, and a running count of what
+    // has been found — so a slow scan reads as slow rather than as broken.
+    const startedAt = Date.now();
+    setPct(0);
+    setEta("");
+
+    /** One request for one piece of text. Returns null rather than throwing. */
+    const scanPiece = async (piece: string, index: number, total: number) => {
+      try {
+        const out = await streamAdvocate({
+          connection: settings.connection,
+          apiKey: settings.apiKey,
+          model: SCAN_MODEL,
+          history: [{ role: "user", content: buildScanPrompt(piece, { index, total }) }],
+          caseContext: null,
+          webSearch: false,
+          mode: "scan",
+          signal: abort.signal,
+          onDelta: () => {},
+        });
+        return parseScanResult(out);
+      } catch {
+        return null;
+      }
+    };
 
     for (let n = 0; n < indices.length; n++) {
       const idx = indices[n];
@@ -407,9 +417,23 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
         parts.length > 0
           ? ` ${found.incidents.length} incidents & ${found.messages.length} messages found so far.`
           : "";
+      setPct(Math.round((n / indices.length) * 100));
+      if (n > 0) {
+        const perPart = (Date.now() - startedAt) / n;
+        const leftMs = perPart * (indices.length - n);
+        const mins = Math.round(leftMs / 60000);
+        setEta(
+          leftMs < 90_000
+            ? "less than two minutes left"
+            : `about ${mins} minute${mins === 1 ? "" : "s"} left`
+        );
+      }
       setProgress(`The Advocate is reading ${label}…${foundNote}`);
       let ok = false;
-      const backoff = [2000, 5000];
+      // Longer than it looks like it needs to be: the common cause of a run of
+      // failures is the model being overloaded, and retrying hard makes that
+      // worse while billing for every attempt.
+      const backoff = [3000, 12000];
       // Whatever the last attempt managed to send, kept so a part that never
       // completes can still be salvaged rather than thrown away.
       let lastPartial = "";
@@ -435,7 +459,7 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
             onDelta: (d) => {
               acc += d;
               if (acc.length > lastPartial.length) lastPartial = acc;
-              setProgress(`Cataloging ${label}… (${acc.length.toLocaleString()} characters)${foundNote}`);
+              setProgress(`Cataloging ${label}…${foundNote}`);
             },
           });
           parts.push(parseScanResult(full || acc));
@@ -467,6 +491,28 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
       }
       // Reported as incomplete either way, so she can top it up — but the
       // evidence that did come back is kept rather than thrown away.
+      // Last resort before giving up on a part: cut it in half.
+      //
+      // A part that cannot finish inside the platform's execution limit fails
+      // identically however many times it is retried — more attempts just cost
+      // more money for the same nothing. Two smaller pieces each have half the
+      // work to do, and in practice both complete.
+      if (!ok && !abort.signal.aborted && chunks[idx].length > 6000) {
+        setProgress(`${label} was too big to finish — splitting it and trying again…`);
+        const mid = chunks[idx].lastIndexOf("\n", Math.floor(chunks[idx].length / 2)) + 1 ||
+          Math.floor(chunks[idx].length / 2);
+        const halves = [chunks[idx].slice(0, mid), chunks[idx].slice(mid)].filter((h) => h.trim());
+        let rescued = 0;
+        for (const h of halves) {
+          if (abort.signal.aborted) break;
+          const r = await scanPiece(h, idx + 1, chunks.length);
+          if (r) {
+            parts.push(r);
+            rescued++;
+          }
+        }
+        if (rescued === halves.length) ok = true;
+      }
       if (!ok && !abort.signal.aborted) failed.push(idx);
       if (parts.length) applyMerged(mergeScanResults(parts));
 
@@ -675,8 +721,11 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
             {busy ? "Scanning…" : "Scan & catalog"}
           </button>
           {busy && (
-            <button className="btn ghost" onClick={stop}>
-              Stop (keeps what's found)
+            // Solid, not ghost. A faded button reads as decoration, and the one
+            // control that lets her stop a twenty-minute job needs to look like
+            // something she is allowed to press.
+            <button className="btn secondary" onClick={stop}>
+              Stop — keep what's found so far
             </button>
           )}
           {!busy && remaining.length > 0 && (
@@ -693,7 +742,7 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
           <input
             ref={fileRef}
             type="file"
-            accept="image/*,.txt,.csv,.tsv,.log,.md,.json,.eml,.html,.htm,.vcf,.rtf,text/*"
+            accept="image/*,application/pdf,.pdf,.txt,.csv,.tsv,.log,.md,.json,.eml,.html,.htm,.vcf,.rtf,text/*"
             multiple
             style={{ display: "none" }}
             onChange={(e) => {
@@ -705,7 +754,7 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
           <input
             ref={shotRef}
             type="file"
-            accept="image/*"
+            accept="image/*,application/pdf,.pdf"
             multiple
             style={{ display: "none" }}
             onChange={(e) => {
@@ -715,6 +764,52 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
             }}
           />
         </div>
+        {pct !== null && busy && (
+          <div style={{ marginTop: 10 }}>
+            <div
+              role="progressbar"
+              aria-valuenow={pct}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              style={{
+                height: 10,
+                borderRadius: 999,
+                background: "var(--line)",
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  width: `${Math.max(2, pct)}%`,
+                  height: "100%",
+                  background: "var(--accent-grad)",
+                  transition: "width 0.4s ease",
+                }}
+              />
+            </div>
+            <p className="small" style={{ margin: "6px 0 0", fontWeight: 600 }}>
+              {pct}% done{eta ? ` · ${eta}` : ""}
+            </p>
+            {result && (result.incidents.length > 0 || result.messages.length > 0) && (
+              // The found items are listed further down the page, past the
+              // sender picker and the summary — which on a laptop is below the
+              // fold, so a scan that is working looks like a scan finding
+              // nothing. The tally goes where her eyes already are.
+              <p className="small" style={{ margin: "4px 0 0" }}>
+                <strong>
+                  Found so far: {result.incidents.length} incident
+                  {result.incidents.length === 1 ? "" : "s"} and {result.messages.length} message
+                  {result.messages.length === 1 ? "" : "s"}
+                </strong>{" "}
+                — listed further down this page, and they keep appearing as it goes.
+              </p>
+            )}
+            <p className="muted small" style={{ margin: "2px 0 0" }}>
+              You can leave this page or close the app — everything found so far is saved, and it
+              picks up where it stopped.
+            </p>
+          </div>
+        )}
         {progress && <p className="muted small" style={{ marginTop: 8 }}>{progress}</p>}
         {archived > 0 && (
           <div className="notice calm" style={{ marginTop: 10 }}>

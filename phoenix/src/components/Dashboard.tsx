@@ -133,9 +133,11 @@ export default function Dashboard({ go, displayName, settings }: Props) {
 
   const onFiles = async (files: File[]) => {
     if (!files.length) return;
-    const texts: string[] = [];
-    for (const f of files) texts.push(await f.text());
-    handoff.scanText = texts.join("\n\n");
+    // Route everything through the same reader the scan page uses, so a PDF
+    // dropped on Home behaves exactly like one dropped on Upload & scan.
+    const { readAnyFiles } = await import("../readAnyFile");
+    const out = await readAnyFiles(files);
+    handoff.scanText = out.text;
     go("scan");
   };
 
@@ -283,7 +285,7 @@ export default function Dashboard({ go, displayName, settings }: Props) {
         <input
           ref={fileRef}
           type="file"
-          accept="image/*,.txt,.csv,.tsv,.log,.md,.json,.eml,.html,.htm,.vcf,.rtf,text/*"
+          accept="image/*,application/pdf,.pdf,.txt,.csv,.tsv,.log,.md,.json,.eml,.html,.htm,.vcf,.rtf,text/*"
           multiple
           style={{ display: "none" }}
           onChange={(e) => {

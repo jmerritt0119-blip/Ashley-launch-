@@ -120,12 +120,27 @@ export default async (req) => {
           // made every part slow enough to die mid-stream, and a real 63-part
           // scan failed 63 times out of 63. It emits JSON, not prose; the extra
           // effort bought nothing and cost her the entire scan.
+          //
+          // Deep Scan gets NO extended thinking, and that is the difference
+          // between a scan that finishes and one that dies.
+          //
+          // With adaptive thinking the model reasons before it emits anything,
+          // so no text streams at all during that phase. On a real archive —
+          // 3.7 million characters, 125 parts — the browser sat on the same
+          // character count for a minute at a time, which is indistinguishable
+          // from the app having frozen, and the function was killed by the
+          // platform's execution limit before the JSON ever arrived.
+          //
+          // Cataloging is extraction, not reasoning: read the messages, emit
+          // the JSON. Dropping thinking makes text start immediately, finishes
+          // each part in a fraction of the time, and cuts both the token bill
+          // and the function runtime Netlify charges for.
           const params = {
             model,
             max_tokens: isChat ? 32000 : 24000,
             system,
             messages: convo,
-            thinking: { type: 'adaptive' },
+            ...(isChat ? { thinking: { type: 'adaptive' } } : {}),
             output_config: { effort: isChat ? 'xhigh' : 'medium' },
             ...(TOOLS ? { tools: TOOLS } : {}),
           };

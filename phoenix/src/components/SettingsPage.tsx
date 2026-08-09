@@ -329,125 +329,139 @@ Created ${new Date().toLocaleString()}
         </label>
       </div>
 
+      {/*
+        One question, one action.
+
+        This screen used to show everything at once: a passphrase box, a
+        files checkbox, a "turn on" button sitting directly beside a "load onto
+        this device" button that does the opposite, a code, a recovery key, and
+        a field for entering someone else's code. Four secret-sounding nouns —
+        vault, vault code, recovery key, passphrase — and a second, unrelated
+        backup with its own passphrase further down the same page.
+
+        Nobody could follow it, including the person who commissioned it. So it
+        now asks one thing at a time: before it is on, the only choice is
+        whether to turn it on. Everything else is behind a heading that says
+        who it is for.
+      */}
       <div className="panel">
-        <h2>Your case on every device — and sharing it</h2>
-        <p className="muted small" style={{ marginTop: 0 }}>
-          Turn this on and your case is saved to a private vault you can open on your phone, your
-          laptop, or a new phone if this one is lost — and that you can hand to your attorney. It's
-          locked before it leaves this device: the vault holds scrambled data only, and nobody
-          without your passphrase can read it. Not us, not the company that stores it, not him.
-        </p>
+        <h2 style={{ marginTop: 0 }}>If you lose this phone</h2>
 
-        <label className="field">
-          <span>Vault passphrase — the only key. Write it down somewhere safe he can't reach.</span>
-          <input
-            type="password"
-            placeholder="a phrase you'll remember, 8+ characters"
-            value={vaultPass}
-            onChange={(e) => setVaultPass(e.target.value)}
-          />
-        </label>
-        <label className="field" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <input
-            type="checkbox"
-            checked={settings.vaultIncludeFiles}
-            onChange={(e) => update({ vaultIncludeFiles: e.target.checked })}
-            style={{ width: "auto" }}
-          />
-          <span style={{ margin: 0 }}>
-            Include photo and video files (slower — turn off if syncing takes too long)
-          </span>
-        </label>
-
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button className="btn" disabled={vaultBusy} onClick={() => void turnOnVault()}>
-            {settings.vaultCode ? "Save my case to the vault now" : "Turn on the vault"}
-          </button>
-          <button className="btn secondary" disabled={vaultBusy} onClick={() => void restoreVault()}>
-            Load my case onto this device
-          </button>
-        </div>
-
-        {settings.vaultCode && (
-          <div className="notice calm" style={{ marginTop: 12 }}>
-            <div className="small" style={{ fontWeight: 700, marginBottom: 4 }}>
-              Your vault code
-            </div>
-            <div
-              style={{
-                fontFamily: "ui-monospace, monospace",
-                fontSize: 20,
-                letterSpacing: 1,
-                fontWeight: 700,
-              }}
-            >
-              {settings.vaultCode}
-            </div>
-            <p className="small" style={{ margin: "8px 0 0" }}>
-              To open your case somewhere else — your laptop, a new phone, or your attorney's
-              office — go to the same website there, open Settings, enter this code and your
-              passphrase, and tap "Load my case onto this device."
+        {!settings.vaultCode ? (
+          <>
+            <p style={{ marginTop: 0 }}>
+              Right now everything you have written is <strong>only on this phone</strong>. If it is
+              lost, broken, taken, or wiped, your case goes with it.
             </p>
-            {(recoveryKey || settings.vaultRecoveryKey) && (
-              <>
-                <div className="small" style={{ fontWeight: 700, margin: "12px 0 4px" }}>
-                  Your recovery key — this is your way back in if you forget the passphrase
-                </div>
-                <div
-                  style={{
-                    fontFamily: "ui-monospace, monospace",
-                    fontSize: 14,
-                    fontWeight: 700,
-                    wordBreak: "break-word",
-                  }}
-                >
-                  {recoveryKey || settings.vaultRecoveryKey}
-                </div>
+            <p className="small">
+              This keeps a locked copy somewhere safe, so it survives. It is scrambled on this
+              phone before it leaves, which means the company storing it cannot read it, we cannot
+              read it, and he cannot read it. Only your passphrase opens it.
+            </p>
+            <label className="field">
+              <span>
+                Choose a passphrase — 8 characters or more. Write it somewhere he cannot reach.
+              </span>
+              <input
+                type="password"
+                placeholder="a phrase you will remember"
+                value={vaultPass}
+                onChange={(e) => setVaultPass(e.target.value)}
+              />
+            </label>
+            <button
+              className="btn"
+              disabled={vaultBusy || vaultPass.length < 8}
+              onClick={() => void turnOnVault()}
+            >
+              {vaultBusy ? "Working…" : "Turn on backup"}
+            </button>
+            <p className="muted small" style={{ marginBottom: 0 }}>
+              It takes a minute or two the first time.
+            </p>
+          </>
+        ) : (
+          <>
+            <div className="notice calm" style={{ marginTop: 0 }}>
+              <strong>Backup is on.</strong>{" "}
+              {vaultSaved?.value
+                ? `Last saved ${new Date(vaultSaved.value).toLocaleString()}.`
+                : "Nothing saved to it yet — tap Save now."}
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button className="btn" disabled={vaultBusy} onClick={() => void turnOnVault()}>
+                {vaultBusy ? "Saving…" : "Save now"}
+              </button>
+              {(recoveryKey || settings.vaultRecoveryKey) && (
                 <button
-                  className="btn secondary sm"
-                  style={{ marginTop: 8 }}
+                  className="btn secondary"
                   onClick={() =>
                     downloadKit(settings.vaultCode, recoveryKey || settings.vaultRecoveryKey)
                   }
                 >
                   ⬇ Save my Recovery Kit
                 </button>
-              </>
-            )}
-            <p className="small muted" style={{ margin: "6px 0 0" }}>
-              Anyone with both the code and the passphrase can read everything, so send them
-              separately (code by email, passphrase by phone) and only to people you choose.
-              {vaultSaved?.value
-                ? ` Last saved to the vault: ${new Date(vaultSaved.value).toLocaleString()}.`
-                : ""}
+              )}
+            </div>
+            <p className="small" style={{ marginBottom: 4 }}>
+              <strong>Save the Recovery Kit and keep it somewhere he cannot reach.</strong> It is a
+              small file holding the two things that get you back in — your code and a recovery key
+              for the day you cannot remember the passphrase. Without it, a forgotten passphrase
+              means the backup can never be opened by anyone, including us.
             </p>
-            <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+            <p className="muted small">
+              Your code: <strong style={{ fontFamily: "ui-monospace, monospace" }}>{settings.vaultCode}</strong>{" "}
+              — anyone holding both this and your passphrase can read everything, so never send them
+              together.
+            </p>
+
+            <details style={{ marginTop: 8 }}>
+              <summary style={{ cursor: "pointer" }} className="small">
+                Opening this on another phone, laptop, or at your attorney's office
+              </summary>
+              <p className="small" style={{ marginTop: 8 }}>
+                On that device, go to the same website, open Settings, and use the section below.
+                You will need the code and the passphrase.
+              </p>
+            </details>
+
+            <details style={{ marginTop: 6 }}>
+              <summary style={{ cursor: "pointer" }} className="small">
+                Stop using this backup on this device
+              </summary>
+              <p className="small" style={{ marginTop: 8 }}>
+                Your records on this phone stay exactly where they are — only the link to the backup
+                is removed.
+              </p>
               <button
                 className="btn ghost sm"
                 onClick={() => {
-                  void navigator.clipboard?.writeText(settings.vaultCode);
-                  setVaultMsg("Vault code copied.");
-                }}
-              >
-                Copy code
-              </button>
-              <button
-                className="btn ghost sm"
-                onClick={() => {
-                  if (confirm("Stop using this vault on this device? Your records here are untouched.")) {
+                  if (confirm("Stop using this backup on this device? Your records here are untouched.")) {
                     update({ vaultCode: "" });
-                    setVaultMsg("Vault disconnected from this device.");
+                    setVaultMsg("Backup disconnected from this device.");
                   }
                 }}
               >
                 Disconnect
               </button>
-            </div>
-          </div>
+            </details>
+          </>
         )}
+      </div>
 
-        <label className="field" style={{ marginTop: 12 }}>
-          <span>Opening a vault made on another device? Enter its code here first.</span>
+      {/* Deliberately its own panel: this is for a DIFFERENT device, and having
+          it beside "turn on backup" is how someone ends up pressing the one
+          that pulls instead of the one that pushes. */}
+      <details className="panel">
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>
+          I'm setting up a new phone or laptop — bring my case onto it
+        </summary>
+        <p className="small">
+          Use this only on a device that does not have your case yet. You need the code and
+          passphrase from the phone that has it.
+        </p>
+        <label className="field">
+          <span>The code from your Recovery Kit</span>
           <input
             placeholder="ABCD-EFGH-JKLM-NPQR"
             value={joinCode}
@@ -455,12 +469,25 @@ Created ${new Date().toLocaleString()}
             onBlur={(e) => setJoinCode(normalizeVaultCode(e.target.value))}
           />
         </label>
+        <label className="field">
+          <span>The passphrase</span>
+          <input
+            type="password"
+            value={vaultPass}
+            onChange={(e) => setVaultPass(e.target.value)}
+          />
+        </label>
+        <button className="btn" disabled={vaultBusy} onClick={() => void restoreVault()}>
+          Bring my case onto this device
+        </button>
 
-        <details className="panel" style={{ marginTop: 12, padding: 12 }}>
-          <summary>I forgot my passphrase</summary>
-          <p className="muted small">
-            That's what the Recovery Kit is for. Enter your vault code above, then the recovery key
-            from your kit here — it gives your passphrase back.
+        <details style={{ marginTop: 12 }}>
+          <summary style={{ cursor: "pointer" }} className="small">
+            I forgot the passphrase
+          </summary>
+          <p className="muted small" style={{ marginTop: 8 }}>
+            That is what the Recovery Kit is for. Put your code in above, then the recovery key from
+            the kit here.
           </p>
           <label className="field">
             <span>Recovery key (the words from your kit)</span>
@@ -476,7 +503,7 @@ Created ${new Date().toLocaleString()}
         </details>
 
         {vaultMsg && <div className="notice calm">{vaultMsg}</div>}
-      </div>
+      </details>
 
       <DataSafety />
 
