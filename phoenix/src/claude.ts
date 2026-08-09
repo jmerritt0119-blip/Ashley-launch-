@@ -353,7 +353,7 @@ async function viaDirect(opts: AdvocateOpts): Promise<string> {
     system,
     messages: opts.history.map((t) => ({ role: t.role, content: t.content })),
     thinking: { type: "adaptive" },
-    output_config: { effort: opts.mode === "scan" ? "high" : "xhigh" },
+    output_config: { effort: opts.mode === "scan" ? "medium" : "xhigh" },
     ...(opts.webSearch === true
       ? { tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 8 }] }
       : {}),
