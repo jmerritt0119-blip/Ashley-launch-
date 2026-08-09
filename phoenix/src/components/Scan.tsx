@@ -299,20 +299,31 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
           ok = true;
         } catch {
           if (abort.signal.aborted) break;
+          // Before paying for another attempt, check whether the one that just
+          // failed already came back with a usable catalog. A part cut off near
+          // the end still holds nearly all of its evidence, and re-running it
+          // costs a full Opus request to maybe recover the tail.
+          //
+          // A failed 63-part scan billed 189 requests and returned nothing,
+          // because every part was retried to exhaustion whether or not it had
+          // already produced something. Salvage first, retry only when there is
+          // genuinely nothing to keep.
+          if (lastPartial.trim()) {
+            try {
+              const rescued = parseScanResult(lastPartial);
+              if (rescued.incidents.length || rescued.messages.length) {
+                parts.push(rescued);
+                break;
+              }
+            } catch {
+              /* nothing parseable yet — a retry is worth paying for */
+            }
+          }
           if (attempt < 2) await new Promise((r) => setTimeout(r, backoff[attempt]));
         }
       }
-      // Every attempt failed, but something came back. Rather than lose the
-      // part outright, rescue whatever was catalogued — parseScanResult can
-      // repair a JSON object that stops part-way. Most of her evidence beats
-      // none of it, and the part is still reported as failed so she can retry.
-      if (!ok && !abort.signal.aborted && lastPartial.trim()) {
-        try {
-          parts.push(parseScanResult(lastPartial));
-        } catch {
-          /* nothing usable came back — it stays a failed part */
-        }
-      }
+      // Reported as incomplete either way, so she can top it up — but the
+      // evidence that did come back is kept rather than thrown away.
       if (!ok && !abort.signal.aborted) failed.push(idx);
       if (parts.length) applyMerged(mergeScanResults(parts));
     }
