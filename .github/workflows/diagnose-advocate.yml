@@ -94,8 +94,10 @@ jobs:
           fi
           last=$(tr -d '[:space:]' < /tmp/ans.trim | tail -c 1)
           echo "last non-space character: '$last'"
+          # Deep Scan replies end in } or ] because they are JSON, not prose.
+          # Leaving those out made a correct catalog report as TRUNCATED twice.
           case "$last" in
-            .|!|\?|\)|\"|\'|:|\;) echo "VERDICT: ends like a finished sentence" ;;
+            .|!|\?|\)|\"|\'|:|\;|\}|\]) echo "VERDICT: ends like a finished reply" ;;
             *) echo "VERDICT: TRUNCATED — ends mid-thought" ;;
           esac
 
