@@ -137,7 +137,7 @@ export default async (req) => {
           // and the function runtime Netlify charges for.
           const params = {
             model,
-            max_tokens: isChat ? 32000 : 24000,
+            max_tokens: isChat ? 32000 : 6000,
             system,
             messages: convo,
             ...(isChat ? { thinking: { type: 'adaptive' } } : {}),
