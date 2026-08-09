@@ -107,7 +107,7 @@ export default async (req) => {
           // effort bought nothing and cost her the entire scan.
           const params = {
             model,
-            max_tokens: isChat ? 32000 : 16000,
+            max_tokens: isChat ? 32000 : 24000,
             system,
             messages: convo,
             thinking: { type: 'adaptive' },
