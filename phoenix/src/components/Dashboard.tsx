@@ -1,6 +1,8 @@
 import { useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../db";
+import { exportEverythingZip } from "../exportCsv";
+import { attorneyEmailText, packetStats } from "../attorneyPacket";
 import { QUICK_ACTIONS } from "../claude";
 import { handoff } from "../handoff";
 import DataSafety from "./DataSafety";
@@ -17,6 +19,43 @@ const HERO_CHIPS = ["Protect my daughter", "Prep for a custody hearing", "What a
 
 export default function Dashboard({ go, displayName, settings }: Props) {
   const [ask, setAsk] = useState("");
+  const [grabBusy, setGrabBusy] = useState<string | null>(null);
+  const [grabDone, setGrabDone] = useState<string | null>(null);
+  const [email, setEmail] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  /**
+   * Everything, in one file, from the first thing she sees.
+   *
+   * The scenario this is built for: he is in the next room, she has perhaps two
+   * minutes, and she needs the case file out and the app closed. Hunting
+   * through tabs is not an option, and neither is waiting. So this sits at the
+   * top of the first screen, takes one tap, runs entirely on the device — no
+   * AI, no network, no cost — and lands in Downloads ready to send.
+   */
+  const grabEverything = async () => {
+    setGrabDone(null);
+    setGrabBusy("Gathering…");
+    try {
+      const { files, bytes } = await exportEverythingZip(
+        (d: number, t: number) => setGrabBusy(`Packaging ${Math.min(d + 1, t)} of ${t}…`),
+        { name: settings.displayName, county: settings.county }
+      );
+      const mb = Math.max(0.1, Math.round((bytes / 1_048_576) * 10) / 10);
+      setGrabDone(`Done — ${files} files, ${mb} MB, in your Downloads. Safe to close the app.`);
+      // Having the file is only half of it. She still has to work out what to
+      // say, while under pressure. Write the email for her.
+      try {
+        setEmail(attorneyEmailText(settings.displayName, await packetStats()));
+      } catch {
+        /* the file is what matters; the draft is a bonus */
+      }
+    } catch (e: any) {
+      setGrabDone("Couldn't build it: " + (e?.message || "unknown error"));
+    } finally {
+      setGrabBusy(null);
+    }
+  };
   const fileRef = useRef<HTMLInputElement>(null);
 
   const counts = useLiveQuery(async () => {
@@ -78,6 +117,69 @@ export default function Dashboard({ go, displayName, settings }: Props) {
         it's won.
       </p>
 
+      <div
+        className="panel"
+        style={{ borderColor: "var(--accent)", borderWidth: 2, textAlign: "center" }}
+      >
+        <h2 style={{ marginTop: 0 }}>Get my whole case out — one tap</h2>
+        <p className="muted small" style={{ marginTop: 0 }}>
+          Everything you have, in one file, ready to send to your attorney or anyone else.
+          It works with no internet and takes a few seconds.
+        </p>
+        <button
+          className="btn"
+          style={{ fontSize: "1.05rem", padding: "12px 26px" }}
+          disabled={!!grabBusy}
+          onClick={() => void grabEverything()}
+        >
+          {grabBusy || "Download everything now"}
+        </button>
+        {grabDone && (
+          <p className="small" style={{ marginBottom: 0 }}>
+            <strong>{grabDone}</strong>
+          </p>
+        )}
+        {email && (
+          <div style={{ marginTop: 12, textAlign: "left" }}>
+            <p className="small" style={{ margin: "0 0 6px" }}>
+              <strong>Step 2 — the email.</strong> Written for you. Copy it, attach the file
+              you just downloaded, send.
+            </p>
+            <textarea
+              readOnly
+              value={email}
+              style={{ width: "100%", minHeight: 150, fontSize: "0.85rem" }}
+              onFocus={(e) => e.currentTarget.select()}
+            />
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+              <button
+                className="btn secondary sm"
+                onClick={() => {
+                  void navigator.clipboard.writeText(email).then(() => {
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2500);
+                  });
+                }}
+              >
+                {copied ? "Copied ✓" : "Copy the email"}
+              </button>
+              <a
+                className="btn secondary sm"
+                href={`mailto:?subject=${encodeURIComponent(
+                  "My case file — records and chronology"
+                )}&body=${encodeURIComponent(email.split("\n").slice(2).join("\n"))}`}
+              >
+                Open in my email app
+              </a>
+            </div>
+          </div>
+        )}
+        <p className="muted small" style={{ marginBottom: 0, marginTop: 10 }}>
+          Need to leave fast? Press <strong>Esc</strong> twice, or tap <strong>✕ Exit</strong> —
+          the screen becomes a weather search straight away.
+        </p>
+      </div>
+
       <div className="panel">
         <h2>Ask The Advocate — anything, any hour</h2>
         <form
@@ -125,7 +227,7 @@ export default function Dashboard({ go, displayName, settings }: Props) {
         <input
           ref={fileRef}
           type="file"
-          accept=".txt,.csv,.tsv,.log,.md,.json,text/plain,text/csv"
+          accept="image/*,.txt,.csv,.tsv,.log,.md,.json,.eml,.html,.htm,.vcf,.rtf,text/*"
           multiple
           style={{ display: "none" }}
           onChange={(e) => {
