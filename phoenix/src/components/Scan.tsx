@@ -267,6 +267,9 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
       setProgress(`The Advocate is reading ${label}…${foundNote}`);
       let ok = false;
       const backoff = [2000, 5000];
+      // Whatever the last attempt managed to send, kept so a part that never
+      // completes can still be salvaged rather than thrown away.
+      let lastPartial = "";
       for (let attempt = 0; attempt < 3 && !ok; attempt++) {
         try {
           let acc = "";
@@ -288,6 +291,7 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
             signal: abort.signal,
             onDelta: (d) => {
               acc += d;
+              if (acc.length > lastPartial.length) lastPartial = acc;
               setProgress(`Cataloging ${label}… (${acc.length.toLocaleString()} characters)${foundNote}`);
             },
           });
@@ -296,6 +300,17 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
         } catch {
           if (abort.signal.aborted) break;
           if (attempt < 2) await new Promise((r) => setTimeout(r, backoff[attempt]));
+        }
+      }
+      // Every attempt failed, but something came back. Rather than lose the
+      // part outright, rescue whatever was catalogued — parseScanResult can
+      // repair a JSON object that stops part-way. Most of her evidence beats
+      // none of it, and the part is still reported as failed so she can retry.
+      if (!ok && !abort.signal.aborted && lastPartial.trim()) {
+        try {
+          parts.push(parseScanResult(lastPartial));
+        } catch {
+          /* nothing usable came back — it stays a failed part */
         }
       }
       if (!ok && !abort.signal.aborted) failed.push(idx);
