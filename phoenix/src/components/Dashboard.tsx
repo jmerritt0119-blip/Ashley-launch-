@@ -23,6 +23,7 @@ export default function Dashboard({ go, displayName, settings }: Props) {
   const [grabDone, setGrabDone] = useState<string | null>(null);
   const [email, setEmail] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const grabLock = useRef(false);
 
   /**
    * Everything, in one file, from the first thing she sees.
@@ -34,6 +35,12 @@ export default function Dashboard({ go, displayName, settings }: Props) {
    * AI, no network, no cost — and lands in Downloads ready to send.
    */
   const grabEverything = async () => {
+    // A synchronous lock, not the disabled prop. Disabling the button depends
+    // on React re-rendering, which has not happened yet when a frightened
+    // person taps twice in quick succession — two exports would then run at
+    // once over the same records. This closes before the first await.
+    if (grabLock.current) return;
+    grabLock.current = true;
     setGrabDone(null);
     setGrabBusy("Gathering…");
     try {
@@ -54,6 +61,7 @@ export default function Dashboard({ go, displayName, settings }: Props) {
       setGrabDone("Couldn't build it: " + (e?.message || "unknown error"));
     } finally {
       setGrabBusy(null);
+      grabLock.current = false;
     }
   };
   const fileRef = useRef<HTMLInputElement>(null);
