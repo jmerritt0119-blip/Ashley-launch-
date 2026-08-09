@@ -284,6 +284,7 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
             ],
             caseContext: null,
             webSearch: false,
+            mode: "scan",
             signal: abort.signal,
             onDelta: (d) => {
               acc += d;
