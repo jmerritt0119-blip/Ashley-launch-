@@ -42,6 +42,27 @@ jobs:
             Q=$(jq -Rn --arg q "${{ inputs.question }}" '{messages:[{role:"user",content:$q}]}')
           fi
 
+          # WHO is refusing? A usage error can come from Netlify (the site), from
+          # the function, or from Anthropic upstream. The response headers name
+          # the source, and the site root tells us whether the whole site is
+          # blocked or only the API.
+          echo "=================== WHO IS ANSWERING ================="
+          echo "--- GET / (site root) ---"
+          curl -s -o /tmp/root.txt -D /tmp/root.hdr -w 'HTTP %{http_code}\n' -m 30 \
+            "https://phoenix-case-builder.netlify.app/" || echo "request failed"
+          grep -iE '^(HTTP/|server|x-nf|x-powered|content-type|x-request-id|retry-after)' /tmp/root.hdr || true
+          echo "--- first 200 bytes of root ---"; head -c 200 /tmp/root.txt; echo
+          echo
+          echo "--- POST /api/advocate (headers) ---"
+          curl -s -o /tmp/api.txt -D /tmp/api.hdr -w 'HTTP %{http_code}\n' -m 60 -X POST \
+            -H 'content-type: application/json' \
+            --data '{"messages":[{"role":"user","content":"Say OK."}]}' \
+            "$URL" || echo "request failed"
+          grep -iE '^(HTTP/|server|x-nf|x-powered|content-type|x-request-id|retry-after|anthropic)' /tmp/api.hdr || true
+          echo "--- body ---"; head -c 300 /tmp/api.txt; echo
+          echo "====================================================="
+          echo
+
           start=$(date +%s.%N)
           code=$(curl -s -N -o /tmp/ans.txt -w '%{http_code}' -m 300 -X POST \
             -H 'content-type: application/json' --data "$Q" "$URL" || echo "000")
