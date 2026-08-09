@@ -198,10 +198,65 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
       .filter(Boolean)
       .includes(name.trim().toLowerCase());
 
+  /**
+   * Takes whatever she has, sorts it out for her.
+   *
+   * Abuse does not arrive as one tidy file type. It is screenshots of texts,
+   * forwarded emails, saved DMs, a PDF from a lawyer, a note she typed. The
+   * uploader used to accept six text extensions and route images through a
+   * separate button she had to know about — and anything else was read as text,
+   * which turns a PDF into binary noise the AI then dutifully cataloged.
+   *
+   * One button now. Images go to OCR, readable files are read, and anything
+   * that comes back as binary is named and explained rather than silently
+   * feeding garbage into her case file.
+   */
+  const looksBinary = (t: string) =>
+    // Replacement chars and NULs are what a decoded PDF/DOCX/image looks like.
+    t.length > 0 && (t.match(/[\uFFFD\u0000]/g) || []).length / t.length > 0.02;
+
   const onFiles = async (files: File[]) => {
+    if (!files.length) return;
+    setError(null);
+    const images = files.filter(
+      (f) => f.type.startsWith("image/") || /\.(png|jpe?g|gif|webp|heic|heif|bmp)$/i.test(f.name)
+    );
+    const rest = files.filter((f) => !images.includes(f));
+
     const texts: string[] = [];
-    for (const f of files) texts.push(await f.text());
+    const unreadable: string[] = [];
+
+    if (images.length) {
+      setBusy(true);
+      try {
+        texts.push(
+          await ocrImages(images, (i, n) => setProgress(`Reading picture ${i} of ${n}…`))
+        );
+      } catch (e: any) {
+        unreadable.push(
+          `${images.length} picture${images.length === 1 ? "" : "s"} (${e?.message || "couldn't be read"})`
+        );
+      } finally {
+        setBusy(false);
+        setProgress("");
+      }
+    }
+
+    for (const f of rest) {
+      const t = await f.text();
+      if (looksBinary(t)) unreadable.push(f.name);
+      else if (t.trim()) texts.push(t);
+    }
+
+    if (unreadable.length) {
+      setError(
+        `Couldn't read ${unreadable.join(", ")}. PDFs and Word files can't be read directly yet — ` +
+          `open it, screenshot it, and drop the screenshot here instead. Everything else you gave me went in fine.`
+      );
+    }
+
     const combined = [text.trim(), ...texts].filter(Boolean).join("\n\n");
+    if (!combined) return;
     if (combined.length > 300_000) {
       // Giant upload: don't render it into the textarea — start scanning it.
       setText("");
@@ -552,7 +607,7 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
           <input
             ref={fileRef}
             type="file"
-            accept=".txt,.csv,.tsv,.log,.md,.json,text/plain,text/csv"
+            accept="image/*,.txt,.csv,.tsv,.log,.md,.json,.eml,.html,.htm,.vcf,.rtf,text/*"
             multiple
             style={{ display: "none" }}
             onChange={(e) => {
