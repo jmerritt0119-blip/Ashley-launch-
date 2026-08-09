@@ -60,7 +60,22 @@ export default async (req) => {
     });
   }
 
-  const client = new Anthropic();
+  // Talk to Anthropic DIRECTLY — never through a gateway.
+  //
+  // `new Anthropic()` with no arguments honours ANTHROPIC_BASE_URL from the
+  // environment. Netlify's AI Gateway sets that, so without anyone choosing it,
+  // every Claude call was being proxied and billed by Netlify as "AI inference"
+  // credits — out of the same pool that keeps the site online. That line was
+  // 94.5% of the bill (6,415 credits) against 10.8 for all compute, and when it
+  // ran dry the whole site went down, not just the AI.
+  //
+  // Pinning the base URL means the tokens bill to the project's own Anthropic
+  // account at Anthropic's rates, and an AI balance can never take her app
+  // offline again. Set PHOENIX_ANTHROPIC_BASE_URL only to deliberately choose a
+  // gateway.
+  const client = new Anthropic({
+    baseURL: process.env.PHOENIX_ANTHROPIC_BASE_URL || 'https://api.anthropic.com',
+  });
   const encoder = new TextEncoder();
 
   // Deep Scan asks for strict JSON and is chunked; chat is the conversation.
