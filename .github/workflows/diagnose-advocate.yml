@@ -45,7 +45,17 @@ jobs:
 
           # An answer that stops without terminal punctuation is a truncation,
           # not a conclusion.
-          last=$(tr -d '[:space:]' < /tmp/ans.txt | tail -c 1)
+          # Strip the clean-finish marker before judging: it is the LAST byte of
+          # a complete answer, so leaving it in makes every good answer look
+          # truncated.
+          if tail -c 1 /tmp/ans.txt | od -An -tx1 | grep -q '04'; then
+            echo "clean-finish marker present — the server ended this on purpose"
+            head -c -1 /tmp/ans.txt > /tmp/ans.trim
+          else
+            echo "NO clean-finish marker — the stream died"
+            cp /tmp/ans.txt /tmp/ans.trim
+          fi
+          last=$(tr -d '[:space:]' < /tmp/ans.trim | tail -c 1)
           echo "last non-space character: '$last'"
           case "$last" in
             .|!|\?|\)|\"|\'|:|\;) echo "VERDICT: ends like a finished sentence" ;;

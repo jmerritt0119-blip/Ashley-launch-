@@ -13,6 +13,37 @@ interface Props {
   active?: boolean;
 }
 
+/**
+ * What she sees before the first word arrives.
+ *
+ * A real answer to a custody question measured 54 seconds, most of it spent
+ * reasoning before any text streams. She used to watch a single "…" for that
+ * whole time, which is indistinguishable from the app having died — and she
+ * has already been shown one answer that silently never arrived. The counter
+ * is the point: it moves, so it is visibly alive.
+ */
+function Waiting() {
+  const [secs, setSecs] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setSecs((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const msg =
+    secs < 8
+      ? "Thinking this through…"
+      : secs < 20
+        ? "Working through the Texas law on this…"
+        : secs < 45
+          ? "Still working — this one deserves a careful answer."
+          : "Still here, still working. A long answer takes a little longer.";
+  return (
+    <span className="muted">
+      {msg}
+      {secs >= 8 ? ` (${secs}s)` : ""}
+    </span>
+  );
+}
+
 export default function Advocate({ settings, goSettings, active = true }: Props) {
   const chat = useLiveQuery(() => db.chat.orderBy("createdAt").toArray(), []);
   const [input, setInput] = useDraft("advocate.input", "");
@@ -160,7 +191,7 @@ export default function Advocate({ settings, goSettings, active = true }: Props)
         {busy && (
           <div className="bubble assistant">
             <div className="who">The Advocate</div>
-            {live || "…"}
+            {live || <Waiting />}
           </div>
         )}
         <div ref={bottomRef} />
