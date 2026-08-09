@@ -65,9 +65,23 @@ jobs:
       - name: Upload source to Netlify build system
         working-directory: phoenix
         run: |
-          npx -y @netlify/mcp@latest \
-            --site-id dab61dfe-7a9c-4d49-88f5-fafaf58aa12c \
-            --proxy-path "${{ inputs.netlify_proxy_path }}"
+          # The proxy URL is short-lived — minted a minute too early, it 400s.
+          # That exact failure has eaten two deploys. Retry with backoff so a
+          # transient rejection recovers, and when it truly is expired, say so
+          # in plain words instead of a bare "400 Bad Request".
+          ok=""
+          for wait in 0 5 15; do
+            [ "$wait" -gt 0 ] && { echo "retrying in ${wait}s…"; sleep "$wait"; }
+            if npx -y @netlify/mcp@latest \
+              --site-id dab61dfe-7a9c-4d49-88f5-fafaf58aa12c \
+              --proxy-path "${{ inputs.netlify_proxy_path }}"; then
+              ok=1; break
+            fi
+          done
+          if [ -z "$ok" ]; then
+            echo "::error::Upload failed three times. The proxy URL has most likely expired — mint a fresh one from the Netlify connector and dispatch this workflow again immediately (the URL only lives for a minute or two)."
+            exit 1
+          fi
 
       - name: Verify the live site responds
         run: |
