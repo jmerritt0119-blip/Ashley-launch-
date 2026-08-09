@@ -215,6 +215,27 @@ export default function Dashboard({ go, displayName, settings }: Props) {
         </p>
       </div>
 
+      {counts?.scannerStale && (
+        <div className="panel" style={{ borderColor: "var(--accent)", borderWidth: 2 }}>
+          <h2 style={{ marginTop: 0 }}>Worth running the scan again</h2>
+          <p style={{ marginTop: 0 }}>
+            The scanner has improved since you last ran it. It{" "}
+            {SCANNER_NOTES[SCANNER_VERSION] ?? "finds more than it used to"}.
+          </p>
+          <p className="small">
+            The things a better scanner finds are, by definition, the ones you don't know are
+            missing — so this is the app's job to tell you, not yours to remember.{" "}
+            <strong>Nothing you have is changed or removed.</strong> New findings are added
+            alongside what's already there, and anything you've reviewed stays exactly as it is.
+            It costs what a scan costs and takes as long as it takes — only worth doing when you
+            have the time and it suits you.
+          </p>
+          <button className="btn" onClick={() => go("scan")}>
+            Run the scan again over my messages
+          </button>
+        </div>
+      )}
+
       <div className="panel">
         <h2>Ask The Advocate — anything, any hour</h2>
         <form
@@ -294,16 +315,6 @@ export default function Dashboard({ go, displayName, settings }: Props) {
             overreacting</em> — this is what the evidence you wrote down actually says.
           </p>
           <button className="btn secondary sm">Show me the pattern — and whether he'll change</button>
-        </div>
-      )}
-
-      {counts?.scannerStale && (
-        <div className="notice calm" style={{ cursor: "pointer" }} onClick={() => go("scan")}>
-          <strong>The scanner has improved since you last ran it.</strong> It{" "}
-          {SCANNER_NOTES[SCANNER_VERSION] ?? "finds more than it used to"}. Running it again over
-          the same messages would pick up what the older version missed. Nothing you have is
-          changed or removed — new findings are simply added, and anything already there stays
-          exactly as it is. Only worth doing when you have time and it suits you.
         </div>
       )}
 

@@ -1,3 +1,6 @@
 node_modules
 dist
 *.local
+
+# Test-only harness for the OCR batch logic (stubs the engine); never shipped.
+.ocrprobe/out/

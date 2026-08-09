@@ -653,3 +653,21 @@ details.panel > summary:hover { color: var(--accent); }
 @media (display-mode: standalone) {
   .nav { top: calc(57px + env(safe-area-inset-top)); }
 }
+
+/*
+ * A small mark on the section that has something new waiting.
+ *
+ * Used for the re-scan offer: her archive was catalogued by an older scanner
+ * and a newer one would find things it missed. She cannot know that on her own,
+ * and she may not open Home for days, so the nav carries it.
+ */
+.badge-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-left: 6px;
+  vertical-align: 2px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+}

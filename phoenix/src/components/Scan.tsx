@@ -93,6 +93,23 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
   const [pickedInc, setPickedInc] = useState<Set<number>>(new Set());
   const [pickedMsg, setPickedMsg] = useState<Set<number>>(new Set());
   const [fallbackDate, setFallbackDate] = useState(today());
+
+  /**
+   * Her answers to the things the scan could only read between the lines.
+   *
+   * A reading by an app proves nothing. Her own account of what happened,
+   * written in her words with the message sitting next to it as corroboration,
+   * is real evidence — so each reading is a question, and answering it is what
+   * files it. Dismissing is equally valid and just as important: a wrong
+   * reading she cannot get rid of would make the whole list untrustworthy.
+   */
+  const [answers, setAnswers] = useState<Record<number, string>>({});
+  const [savedImplied, setSavedImplied] = useState<Set<number>>(new Set());
+  // Hiding the button depends on React re-rendering, which has not happened
+  // yet when someone taps twice. This closes before the first await, so a
+  // double tap can never file the same account twice.
+  const savingImplied = useRef<Set<number>>(new Set());
+  const [dismissed, setDismissed] = useState<Set<number>>(new Set());
   const [added, setAdded] = useState<string | null>(null);
   const [remaining, setRemaining] = useState<number[]>([]);
   const [loadedNote, setLoadedNote] = useState<string | null>(null);
@@ -230,9 +247,13 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     if (images.length) {
       setBusy(true);
       try {
-        texts.push(
-          await ocrImages(images, (i, n) => setProgress(`Reading picture ${i} of ${n}…`))
+        const { text: ocrText, failed } = await ocrImages(images, (i, n) =>
+          setProgress(`Reading picture ${i} of ${n}…`)
         );
+        // Keep every picture that worked. Naming only the ones that didn't is
+        // the difference between "80 of 100 went in" and losing the batch.
+        if (ocrText) texts.push(ocrText);
+        for (const f of failed) unreadable.push(`${f.name} (${f.reason})`);
       } catch (e: any) {
         unreadable.push(
           `${images.length} picture${images.length === 1 ? "" : "s"} (${e?.message || "couldn't be read"})`
@@ -275,8 +296,17 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     setError(null);
     setBusy(true);
     try {
-      const extracted = await ocrImages(files, (i, n) => setProgress(`Reading screenshot ${i} of ${n}…`));
-      setText((t) => (t ? t + "\n\n" : "") + extracted);
+      const { text: extracted, read, failed } = await ocrImages(files, (i, n) =>
+        setProgress(`Reading screenshot ${i} of ${n}…`)
+      );
+      if (extracted) setText((t) => (t ? t + "\n\n" : "") + extracted);
+      if (failed.length) {
+        setError(
+          `Read ${read} of ${files.length} — those are in the box below and safe. ` +
+            `${failed.length} couldn't be read: ${failed.slice(0, 4).map((f) => f.name).join(", ")}` +
+            `${failed.length > 4 ? `, and ${failed.length - 4} more` : ""}. Try those again on their own.`
+        );
+      }
     } catch (e: any) {
       setError("Couldn't read the screenshots: " + (e?.message || "OCR failed") + " (OCR needs a network connection the first time).");
     } finally {
@@ -487,6 +517,52 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     if (next.has(i)) next.delete(i);
     else next.add(i);
     save(next);
+  };
+
+  /**
+   * Which category a reading belongs in once she confirms it.
+   *
+   * Conservative on purpose: anything the taxonomy does not clearly cover
+   * lands in coercive control rather than being upgraded into something more
+   * serious that the words may not carry.
+   */
+  const categoryForImplied = (type: string): string[] => {
+    const t = type.toLowerCase();
+    if (/sexual|reproductive|image-based/.test(t)) return ["sexual abuse"];
+    if (/physical|strangulation/.test(t)) return ["physical"];
+    if (/threat/.test(t)) return ["threats / intimidation"];
+    if (/monitor|stalk/.test(t)) return ["stalking / monitoring"];
+    if (/isolat/.test(t)) return ["isolation"];
+    if (/financial/.test(t)) return ["financial abuse"];
+    if (/child|substance/.test(t)) return ["children / custody"];
+    return ["coercive control"];
+  };
+
+  /** Files her answer as an incident — her account, his message beneath it. */
+  const saveImplied = async (idx: number) => {
+    if (!result) return;
+    const f = result.implied[idx];
+    const account = (answers[idx] || "").trim();
+    if (!account || savingImplied.current.has(idx)) return;
+    savingImplied.current.add(idx);
+    await db.incidents.add({
+      date: f.date || fallbackDate,
+      time: "",
+      title: f.type.charAt(0).toUpperCase() + f.type.slice(1),
+      narrative:
+        `${account}\n\n` +
+        `[In his own words, ${f.date || "date not stated in the message"}: "${f.quote}"]` +
+        (f.date ? "" : "\n[Date not stated in source — needs confirming]"),
+      categories: categoryForImplied(f.type),
+      severity: 3,
+      location: "",
+      witnesses: "",
+      policeReport: "",
+      medical: "",
+      childrenPresent: false,
+      createdAt: Date.now(),
+    });
+    setSavedImplied((s) => new Set(s).add(idx));
   };
 
   const commit = async () => {
@@ -723,6 +799,91 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
               <p className="small" style={{ fontWeight: 700, marginBottom: 0 }}>
                 If you are in danger right now: 911. Any hour: 1-800-799-7233, or text START to
                 88788. In Texas: Texas Advocacy Project 1-800-374-HOPE.
+              </p>
+            </div>
+          )}
+
+          {result.implied && result.implied.filter((_, i) => !dismissed.has(i)).length > 0 && (
+            <div className="panel" style={{ borderColor: "var(--accent)", borderWidth: 2 }}>
+              <h2 style={{ marginTop: 0 }}>Things these messages point at without saying</h2>
+              <p className="small" style={{ marginTop: 0 }}>
+                The worst things rarely get written down plainly — they get referred to, by two
+                people who both already know what is meant. Below is what the wording appears to
+                point at. <strong>None of it is proof, and none of it is in your records yet.</strong>{" "}
+                Only you know what actually happened. Where something is right, answer the question
+                and it becomes your own account with his message attached to it — and that is
+                evidence. Where it's wrong, dismiss it; getting this list wrong would be worse than
+                it being short.
+              </p>
+              {result.implied.map((f, i) =>
+                dismissed.has(i) ? null : (
+                  <div className="item-card" key={i}>
+                    <div className="head">
+                      {f.date && <span className="date">{f.date}</span>}
+                      <span className="title">{f.type}</span>
+                      <span
+                        className="muted small"
+                        style={{ marginLeft: "auto", textTransform: "uppercase", letterSpacing: 0.5 }}
+                      >
+                        {f.confidence}
+                      </span>
+                    </div>
+                    {f.quote && (
+                      <p style={{ whiteSpace: "pre-wrap", margin: "6px 0", fontWeight: 600 }}>
+                        "{f.quote}"
+                      </p>
+                    )}
+                    <p className="small" style={{ margin: "0 0 4px" }}>{f.reading}</p>
+                    {f.basis && (
+                      <p className="muted small" style={{ margin: "0 0 8px" }}>
+                        <strong>What makes it read that way:</strong> {f.basis}
+                      </p>
+                    )}
+                    {savedImplied.has(i) ? (
+                      <p className="small" style={{ margin: 0, fontWeight: 600 }}>
+                        Saved to your incidents, in your words. You can edit it any time under Add
+                        evidence → Incidents.
+                      </p>
+                    ) : (
+                      <>
+                        {f.askHer && (
+                          <p className="small" style={{ margin: "0 0 6px", fontWeight: 600 }}>
+                            {f.askHer}
+                          </p>
+                        )}
+                        <textarea
+                          rows={3}
+                          placeholder="What happened, in your own words. Only what you actually remember — you can leave this and come back."
+                          value={answers[i] || ""}
+                          onChange={(e) =>
+                            setAnswers((a) => ({ ...a, [i]: e.target.value }))
+                          }
+                          style={{ width: "100%" }}
+                        />
+                        <div className="row" style={{ gap: 8, marginTop: 6 }}>
+                          <button
+                            className="btn sm"
+                            disabled={!(answers[i] || "").trim()}
+                            onClick={() => void saveImplied(i)}
+                          >
+                            Save this as my account
+                          </button>
+                          <button
+                            className="btn ghost sm"
+                            onClick={() => setDismissed((s) => new Set(s).add(i))}
+                          >
+                            That's not what this was
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )
+              )}
+              <p className="muted small" style={{ marginBottom: 0 }}>
+                If any of this is hard to look at, that is an ordinary reaction and you do not have
+                to do it today. The National Domestic Violence Hotline is <strong>1-800-799-7233</strong>,
+                or text <strong>START</strong> to <strong>88788</strong> — free, confidential, any hour.
               </p>
             </div>
           )}
