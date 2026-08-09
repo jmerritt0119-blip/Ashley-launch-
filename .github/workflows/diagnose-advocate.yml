@@ -9,6 +9,10 @@ name: Diagnose the Advocate
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: "chat (conversation) or scan (one Deep Scan part)"
+        required: false
+        default: "chat"
       question:
         description: "Question to ask the live Advocate"
         required: false
@@ -24,7 +28,19 @@ jobs:
       - name: Ask the live Advocate and time the answer
         run: |
           URL="https://phoenix-case-builder.netlify.app/api/advocate"
-          Q=$(jq -Rn --arg q "${{ inputs.question }}" '{messages:[{role:"user",content:$q}]}')
+          # Deep Scan is the mode that failed 63 out of 63 parts. Testing it
+          # here means she is never the one who finds out it is broken.
+          if [ "${{ inputs.mode }}" = "scan" ]; then
+            Q=$(jq -Rn '{
+              mode:"scan", webSearch:false,
+              messages:[{role:"user",content:(
+                "Return ONLY strict JSON: {\"incidents\":[{\"date\":\"YYYY-MM-DD\",\"summary\":\"...\"}]}\n\n" +
+                "2024-03-02 him: if you take her I will make sure you never see her again\n" +
+                "2024-03-02 me: please stop\n" +
+                "2024-03-05 him: no court will believe a word you say\n")}]}')
+          else
+            Q=$(jq -Rn --arg q "${{ inputs.question }}" '{messages:[{role:"user",content:$q}]}')
+          fi
 
           start=$(date +%s.%N)
           code=$(curl -s -N -o /tmp/ans.txt -w '%{http_code}' -m 300 -X POST \
