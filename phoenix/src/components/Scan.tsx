@@ -12,7 +12,7 @@ import {
   SCANNER_VERSION,
   type ScanResult,
 } from "../scan";
-import { ocrImages } from "../ocr";
+import { readAnyFiles } from "../readAnyFile";
 import { messagesFromCsv, type ParsedMessage } from "../parseMessages";
 import type { Settings } from "../settings";
 import { recordImport, sha256Hex } from "../integrity";
@@ -239,54 +239,33 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
   const onFiles = async (files: File[]) => {
     if (!files.length) return;
     setError(null);
-    const images = files.filter(
-      (f) => f.type.startsWith("image/") || /\.(png|jpe?g|gif|webp|heic|heif|bmp)$/i.test(f.name)
-    );
-    const rest = files.filter((f) => !images.includes(f));
-
-    const texts: string[] = [];
-    const unreadable: string[] = [];
-
-    if (images.length) {
-      setBusy(true);
-      try {
-        const { text: ocrText, failed } = await ocrImages(images, (i, n) =>
-          setProgress(`Reading picture ${i} of ${n}…`)
-        );
-        // Keep every picture that worked. Naming only the ones that didn't is
-        // the difference between "80 of 100 went in" and losing the batch.
-        if (ocrText) texts.push(ocrText);
-        for (const f of failed) unreadable.push(`${f.name} (${f.reason})`);
-      } catch (e: any) {
-        unreadable.push(
-          `${images.length} picture${images.length === 1 ? "" : "s"} (${e?.message || "couldn't be read"})`
-        );
-      } finally {
-        setBusy(false);
-        setProgress("");
-      }
+    setBusy(true);
+    let out;
+    try {
+      out = await readAnyFiles(files, setProgress);
+    } catch (e: any) {
+      setBusy(false);
+      setProgress("");
+      setError("Couldn't read those files: " + (e?.message || "unknown error"));
+      return;
     }
+    setBusy(false);
+    setProgress("");
 
-    for (const f of rest) {
-      const t = await f.text();
-      if (looksBinary(t)) unreadable.push(f.name);
-      else if (t.trim()) texts.push(t);
-    }
-
-    if (unreadable.length) {
+    if (out.failed.length) {
       setError(
-        `Couldn't read ${unreadable.join(", ")}. PDFs and Word files can't be read directly yet — ` +
-          `open it, screenshot it, and drop the screenshot here instead. Everything else you gave me went in fine.`
+        `Read ${out.read.length} of ${files.length}. ` +
+          `Couldn't read: ${out.failed.map((f) => `${f.name} (${f.reason})`).join("; ")}. ` +
+          `Everything else went in fine.`
       );
     }
 
-    const combined = [text.trim(), ...texts].filter(Boolean).join("\n\n");
+    const combined = [text.trim(), out.text].filter(Boolean).join("\n\n");
     if (!combined) return;
     if (combined.length > 300_000) {
-      // Giant upload: don't render it into the textarea — start scanning it.
       setText("");
       setLoadedNote(
-        `File loaded — ${combined.length.toLocaleString()} characters (kept out of the text box to stay fast).`
+        `Loaded — ${combined.length.toLocaleString()} characters (kept out of the text box to stay fast).`
       );
       void run(false, combined);
     } else {
@@ -299,13 +278,11 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     setError(null);
     setBusy(true);
     try {
-      const { text: extracted, read, failed } = await ocrImages(files, (i, n) =>
-        setProgress(`Reading screenshot ${i} of ${n}…`)
-      );
+      const { text: extracted, read, failed } = await readAnyFiles(files, setProgress);
       if (extracted) setText((t) => (t ? t + "\n\n" : "") + extracted);
       if (failed.length) {
         setError(
-          `Read ${read} of ${files.length} — those are in the box below and safe. ` +
+          `Read ${read.length} of ${files.length} — those are in the box below and safe. ` +
             `${failed.length} couldn't be read: ${failed.slice(0, 4).map((f) => f.name).join(", ")}` +
             `${failed.length > 4 ? `, and ${failed.length - 4} more` : ""}. Try those again on their own.`
         );
@@ -765,7 +742,7 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
           <input
             ref={fileRef}
             type="file"
-            accept="image/*,.txt,.csv,.tsv,.log,.md,.json,.eml,.html,.htm,.vcf,.rtf,text/*"
+            accept="image/*,application/pdf,.pdf,.txt,.csv,.tsv,.log,.md,.json,.eml,.html,.htm,.vcf,.rtf,text/*"
             multiple
             style={{ display: "none" }}
             onChange={(e) => {
@@ -777,7 +754,7 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
           <input
             ref={shotRef}
             type="file"
-            accept="image/*"
+            accept="image/*,application/pdf,.pdf"
             multiple
             style={{ display: "none" }}
             onChange={(e) => {
