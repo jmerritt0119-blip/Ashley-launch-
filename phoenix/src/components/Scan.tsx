@@ -790,6 +790,20 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
             <p className="small" style={{ margin: "6px 0 0", fontWeight: 600 }}>
               {pct}% done{eta ? ` · ${eta}` : ""}
             </p>
+            {result && (result.incidents.length > 0 || result.messages.length > 0) && (
+              // The found items are listed further down the page, past the
+              // sender picker and the summary — which on a laptop is below the
+              // fold, so a scan that is working looks like a scan finding
+              // nothing. The tally goes where her eyes already are.
+              <p className="small" style={{ margin: "4px 0 0" }}>
+                <strong>
+                  Found so far: {result.incidents.length} incident
+                  {result.incidents.length === 1 ? "" : "s"} and {result.messages.length} message
+                  {result.messages.length === 1 ? "" : "s"}
+                </strong>{" "}
+                — listed further down this page, and they keep appearing as it goes.
+              </p>
+            )}
             <p className="muted small" style={{ margin: "2px 0 0" }}>
               You can leave this page or close the app — everything found so far is saved, and it
               picks up where it stopped.
