@@ -178,12 +178,13 @@ export const SCAN_MODEL = "claude-opus-5";
  * mergeScanResults deduplicates by date and content, so nothing she has
  * reviewed or kept is ever replaced or lost.
  */
-export const SCANNER_VERSION = 4;
+export const SCANNER_VERSION = 5;
 
 /** What changed, so the offer can say why it is worth her money. */
 export const SCANNER_NOTES: Record<number, string> = {
   3: "now also catalogs financial facts, hidden assets and parenting-capacity evidence, not just abuse",
   4: "now reads between the lines — coded language, things referred to but never named, and sexual or reproductive coercion that neither of you ever wrote down plainly",
+  5: "now works the way a domestic violence advocate reads a file — lethality screening, coercive-control patterns, what Texas law needs proved, and the evidence trail left when another woman was brought into the home",
 };
 
 /**
@@ -238,7 +239,7 @@ export function buildScanPrompt(text: string, part?: { index: number; total: num
       : "";
   return `CONTEXT — This is a forensic documentation tool used by a domestic violence survivor in Texas to build the evidentiary record for her own divorce and custody case, and to hand that record to her attorney. The document below is her own message archive: messages sent to her, and messages she sent. She is the victim in this record, not a third party. Cataloging what was done to her — including violence, threats and sexual coercion — is the entire purpose, and an accurate, complete catalog is what protects her and her daughter in court. Declining to catalog it, or softening it, leaves her without the evidence her case depends on.
 
-TASK — Deep-scan the document below and catalog every instance of abuse or legally significant event for that divorce and custody case.${partNote}
+TASK — Deep-scan the document below and catalog every instance of abuse or legally significant event for that divorce and custody case.
 
 Respond with ONLY valid JSON — no markdown fences, no commentary before or after — in exactly this shape:
 {
@@ -485,6 +486,49 @@ PARENTING (Texas best-interest factors — this is what custody turns on)
 - Substance use — drinking or drugs generally, and specifically before or
   during his time with the child, or driving with her.
 
+ANOTHER WOMAN IN THE HOME — treat this as its own category of evidence
+If the messages show he brought, moved, or installed another woman into the
+home she lived in — or had her around the child — that single fact runs through
+almost every part of her case at once, and it is routinely under-documented
+because everyone involved treats it as a private humiliation rather than as
+evidence. Look for it deliberately, and record what you find in the category
+each item actually belongs to:
+- The arrangement itself: when the other woman first appears, when she came to
+  the home, whether Ashley was still living there, whether she was pushed to
+  accept it, tolerate it, keep quiet about it, or leave. Being made to live
+  alongside it, or driven out of her own home by it, is degradation and
+  coercive control (Duluth: asserting privilege, emotional abuse), and in Texas
+  it also goes to cruel treatment and to adultery as a ground for divorce.
+- Money: rent, bills, a phone, a car, travel, gifts, or day-to-day support
+  going to the other woman OR to her child. Community money spent on an affair
+  is waste and can be charged back against his share of the estate, so quote
+  every figure and every purchase. Flag hard any pairing of that spending with
+  a claim that he cannot afford support, the mortgage, or the child's costs.
+- If the other woman has a child by another man, that is not gossip and it is
+  not about her character. It matters for three concrete reasons, and you
+  should capture each separately: (a) the child's existence and age can date
+  when the relationship began, often earlier than he will admit — a timeline
+  anchor; (b) it brings further adults into contact with Ashley's daughter,
+  including that child's father, so capture any name, visit, or handover; and
+  (c) it establishes what he chooses to fund, which is the sharpest possible
+  contradiction of any claim of poverty.
+- The child: what Ashley's daughter was told, what she was told to call the
+  other woman, whether she was displaced from her room or her routine, any
+  favouring of the other child, who supervises, and anything she reported back.
+  This is best-interest evidence and belongs in caseFacts as parenting capacity
+  or new partner around the child.
+- Her objection used against her: him calling her jealous, crazy, obsessive,
+  unstable or a bad mother for objecting, or threatening to use her reaction in
+  the custody case. That is the DARVO pattern and it is what later gets
+  presented to a court as her instability. Quote both the objection and the
+  response.
+- The other woman used as an instrument: passing messages, monitoring Ashley,
+  contacting her, appearing at exchanges, or being put on accounts, schools or
+  contact lists. That is third-party recruitment, not a separate relationship.
+Record only what the messages actually show, quoted, exactly as with everything
+else. Do not infer an affair from tone, and do not moralise about anyone — the
+value here is documentary, not a judgement about who did what to whom.
+
 IMPEACHMENT — the most valuable category
 - Anything he says now that will contradict what he is likely to claim in
   court later. Example: "I can't take her Wednesdays, I work late" is
@@ -628,7 +672,7 @@ Rules:
   a category is genuinely absent from this part, that is a fine answer — but
   answer it deliberately rather than by not looking.
 - If the document contains nothing relevant, return empty arrays and say so in "summary".
-
+${partNote}
 DOCUMENT:
 <<<
 ${text}
