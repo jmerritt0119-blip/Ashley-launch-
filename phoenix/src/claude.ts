@@ -348,7 +348,9 @@ async function viaDirect(opts: AdvocateOpts): Promise<string> {
   const isScan = opts.mode === "scan";
   const params: any = {
     model: opts.model,
-    max_tokens: isScan ? 24000 : 32000,
+    // Same ceiling either way, and the same as the server uses — a scan part
+    // can produce a long catalog and must not be cut off mid-list.
+    max_tokens: 32000,
     system,
     messages: opts.history.map((t) => ({ role: t.role, content: t.content })),
     // Deep Scan is set up exactly as the server sets it up, so a scan run on

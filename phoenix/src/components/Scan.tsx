@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { addMessagesDeduped, db } from "../db";
 import { streamAdvocate } from "../claude";
@@ -6,6 +6,7 @@ import { handoff } from "../handoff";
 import {
   buildScanPrompt,
   chunkScanInput,
+  estimateScanTime,
   mergeScanResults,
   parseScanResult,
   SCAN_CHUNK_SIZE,
@@ -222,9 +223,9 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
   /**
    * The whole-case analysis, and whether it is running.
    *
-   * Deliberately a separate step she starts herself rather than something the
-   * scan does automatically at the end: it is one more paid request, and after
-   * a long scan she should be the one deciding whether to spend it.
+   * A separate step she starts herself rather than something the scan does
+   * automatically at the end, so that after a long scan she chooses when to
+   * read the analysis rather than having it appear unbidden.
    */
   const [analysis, setAnalysis] = useState<CaseAnalysis | null>(null);
   const [analysing, setAnalysing] = useState(false);
@@ -250,6 +251,10 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
 
   const needsKey = settings.connection === "direct" && !settings.apiKey;
   const estParts = Math.max(1, Math.ceil(text.trim().length / SCAN_CHUNK_SIZE));
+  const estimate = useMemo(
+    () => (text.trim().length > 0 ? estimateScanTime(text.trim().length) : null),
+    [text]
+  );
 
   /**
    * The facts list is the part an attorney can act on immediately, so it gets
@@ -796,7 +801,7 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
               ? "\n\nStopped straight away, because this is not something trying again would fix — " +
                 "every remaining part would come back with the same answer."
               : "\n\nStopped after the first 8 parts, because every one of them failed the same " +
-                "way, and continuing would have cost money without finding anything.") +
+                "way and the rest would have too.") +
             " Nothing already in your records has been touched. Once that's sorted, tap scan " +
             "again — it picks up from here rather than starting over."
         );
@@ -828,7 +833,11 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
           .join(", ")}${failed.length > 20 ? "…" : ""}) could not be read and ${
           failed.length === 1 ? "was" : "were"
         } skipped — everything else is cataloged below. Tap "Scan remaining parts" to finish.` +
-          (firstError ? `\n\nWhat went wrong: ${firstError}` : "")
+          // Same rule as the live banner: the real reason is shown unless it is
+          // a billing or key problem, which is not hers to see or to solve.
+          (firstError && !isFatalScanError(firstError)
+            ? `\n\nWhat went wrong: ${firstError}`
+            : "")
       );
     }
     setBusy(false);
@@ -1096,6 +1105,15 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
             ? ` — will scan in ${estParts} parts, automatically`
             : " — no size limit; paste or upload the whole export"}
         </p>
+        {estimate && (
+          <p className="small" style={{ margin: "6px 0", fontWeight: 600 }}>
+            This will take roughly {estimate.minsLow}–{estimate.minsHigh} minutes.{" "}
+            <span className="muted" style={{ fontWeight: 400 }}>
+              You can stop at any point and pick up where you left off — nothing is lost and
+              nothing is read twice.
+            </span>
+          </p>
+        )}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button className="btn" disabled={busy || needsKey || !text.trim()} onClick={() => void run()}>
             {busy ? "Scanning…" : "Scan & catalog"}
@@ -1237,27 +1255,35 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
         {liveError && (
           // Right under the progress bar, where she is already looking, the
           // moment the first part fails — not twenty minutes later.
+          // What she is shown depends on whose problem it is.
+          //
+          // A billing or key problem belongs to whoever set this app up for
+          // her, and she is never shown the money — not the balance, not the
+          // rate, not a link to a billing page, not the server's own wording.
+          // Asking a woman assembling the evidence of her own abuse to go and
+          // top up an account before she is allowed to look at it is not
+          // something this app will do. She gets told it is not her, not her
+          // case, and not lost, and that it will be dealt with.
+          //
+          // Everything else — a dropped connection, an overloaded model — is
+          // shown as it came, because that is information she can act on.
           <div className="notice" style={{ marginTop: 10 }}>
-            <strong>A part came back with this:</strong>
-            <p style={{ whiteSpace: "pre-wrap", margin: "6px 0" }}>{liveError}</p>
-            {/(credit|balance|billing)/i.test(liveError) && (
-              <p className="small" style={{ margin: "6px 0 0" }}>
-                This is the account paying for the AI, not anything about your case or your
-                file. Everything already saved is safe.{" "}
-                <a
-                  href="https://console.anthropic.com/settings/billing"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Add credit
-                </a>
-                , then tap scan again — it carries on from where it stopped.
-              </p>
-            )}
-            {/(authentication|api key|rejected)/i.test(liveError) && (
-              <p className="small" style={{ margin: "6px 0 0" }}>
-                This is the site's API key, not your data. Nothing in your file is affected.
-              </p>
+            {isFatalScanError(liveError) ? (
+              <>
+                <strong>The AI service isn't answering at the moment.</strong>
+                <p className="small" style={{ margin: "6px 0 0" }}>
+                  This is a problem with the service itself, not with your case, your file, or
+                  anything you did. Every message and every finding you already have is safe on
+                  this device. Whoever set this up for you will get it working — and when it is,
+                  tap scan again and it carries on from exactly where it stopped, without
+                  re-reading anything.
+                </p>
+              </>
+            ) : (
+              <>
+                <strong>A part came back with this:</strong>
+                <p style={{ whiteSpace: "pre-wrap", margin: "6px 0" }}>{liveError}</p>
+              </>
             )}
           </div>
         )}
@@ -1274,7 +1300,7 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
         {dupNote && (
           <div className="notice calm" style={{ marginTop: 10 }}>
             {dupNote} Uploading the same export again is safe — it never duplicates your archive,
-            and it costs nothing extra to do.
+            and it never adds the same message twice.
           </div>
         )}
 
@@ -1479,8 +1505,8 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
               can see the shape of the whole thing — whether it got worse, what it happened
               around, which of the danger signs are actually present, who else saw it, and
               where his own words contradict what he'll say in court. This reads every finding
-              together and writes that down. It's one more request, over the findings rather
-              than the messages, so it's quick and costs a fraction of a scan.
+              together and writes that down. It works from what the scan already found rather
+              than the messages themselves, so it only takes a moment.
             </p>
             {!analysis && (
               <button className="btn" disabled={analysing || busy} onClick={() => void analyseWholeCase()}>

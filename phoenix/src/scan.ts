@@ -84,6 +84,16 @@ export interface ScanResult {
   facts: CaseFact[];
   implied: ImpliedFinding[];
   summary: string;
+  /**
+   * True when the reply had to be repaired because it stopped mid-JSON.
+   *
+   * Everything up to the cut is kept and is good evidence, but the tail is
+   * gone, and until now that happened in silence — the salvage worked, the
+   * part was counted as a success, and nobody could tell that the densest
+   * stretch of her archive had been trimmed. A loss she cannot see is the
+   * one thing this app must never do, so the count is surfaced.
+   */
+  truncated?: boolean;
 }
 
 // There is no cap on how much can be scanned. Anything bigger than one part
@@ -166,6 +176,26 @@ export const SCANNER_NOTES: Record<number, string> = {
   3: "now also catalogs financial facts, hidden assets and parenting-capacity evidence, not just abuse",
   4: "now reads between the lines — coded language, things referred to but never named, and sexual or reproductive coercion that neither of you ever wrote down plainly",
 };
+
+/**
+ * How long a scan of this document will take.
+ *
+ * Time only, and deliberately so. What it costs in credit is not her problem
+ * and is never shown to her: the person who set this up pays for it, and a
+ * woman deciding whether she can afford to look at the evidence of her own
+ * abuse is a thing this app will not create. She gets what she actually needs
+ * to plan around — roughly how long to leave it running.
+ *
+ * A range rather than a figure, because parts vary and a precise number would
+ * be a lie.
+ */
+export function estimateScanTime(chars: number) {
+  const parts = Math.max(1, Math.ceil(chars / SCAN_CHUNK_SIZE));
+  // Four parts at a time; a part takes roughly half a minute to a minute and a half.
+  const minsLow = Math.max(1, Math.round((parts / 4) * 0.6));
+  const minsHigh = Math.max(2, Math.round((parts / 4) * 1.5));
+  return { parts, minsLow, minsHigh };
+}
 
 export function chunkScanInput(text: string): string[] {
   const t = text.trim();
@@ -631,7 +661,12 @@ export function parseScanResult(raw: string): ScanResult {
       obj = null;
     }
   }
-  if (!obj) obj = repairTruncated(s.slice(first));
+  // Needing the repair path IS the signal that the reply was cut short.
+  let wasTruncated = false;
+  if (!obj) {
+    obj = repairTruncated(s.slice(first));
+    wasTruncated = !!obj;
+  }
   if (!obj) {
     // Quote it. A reply that will not parse is either a refusal, an error
     // message or a truncation, and those need completely different fixes —
@@ -712,6 +747,7 @@ export function parseScanResult(raw: string): ScanResult {
     facts,
     implied,
     summary: String(obj.summary || "").slice(0, 4000),
+    truncated: wasTruncated,
   };
 }
 

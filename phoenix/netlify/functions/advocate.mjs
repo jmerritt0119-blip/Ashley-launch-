@@ -137,7 +137,13 @@ export default async (req) => {
           // and the function runtime Netlify charges for.
           const params = {
             model,
-            max_tokens: isChat ? 32000 : 16000,
+            // A ceiling, not a target: raising it costs nothing unless a part
+            // actually has that much to say. A scan part now carries three
+            // times the conversation it used to and is asked for up to ~150
+            // flagged messages, so 16,000 had become a real risk of cutting a
+            // catalog off mid-list — and it would be the densest parts, the
+            // worst weeks, that hit it.
+            max_tokens: 32000,
             system,
             messages: convo,
             ...(isChat ? { thinking: { type: 'adaptive' } } : {}),
