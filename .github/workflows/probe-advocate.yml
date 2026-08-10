@@ -1,0 +1,89 @@
+name: Probe Advocate
+
+# Sends ONE real request to the live /api/advocate and prints exactly what
+# comes back.
+#
+# This exists because the container the assistant runs in cannot reach
+# phoenix-case-builder.netlify.app — outbound access to it is blocked — so
+# every question about "what is the live endpoint actually doing" has had to
+# be answered by inference. Inference is what turned a dead account into an
+# eight-hour hunt for a timeout, twice.
+#
+# A GitHub runner can reach the site, so this asks it directly. One request,
+# a few cents, and the reply is printed verbatim instead of guessed at.
+#
+# mode=scan is the point: the deploy check sends a trivial "say OK" chat
+# request, which succeeds under conditions a real scan part fails under. This
+# sends a scan-shaped request — scan mode, the scan model, a document — so it
+# fails the same way hers does.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "scan or chat"
+        required: false
+        default: "scan"
+      model:
+        description: "Model to ask for"
+        required: false
+        default: "claude-opus-5"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ask the live endpoint and print the answer
+        env:
+          URL: https://phoenix-case-builder.netlify.app
+          MODE: ${{ inputs.mode }}
+          MODEL: ${{ inputs.model }}
+        run: |
+          set -u
+
+          # A small but real document, in the shape a scan part carries.
+          python3 - <<'PY' > /tmp/body.json
+          import json, os
+          lines = []
+          for d in range(1, 21):
+              lines.append(f"2024-04-{d:02d} 21:1{d%10} Jackson: if you take her to your mother's again I will come and get her myself")
+              lines.append(f"2024-04-{d:02d} 21:2{d%10} Me: please stop, you're scaring me")
+          doc = "\n".join(lines)
+          body = {
+            "mode": os.environ["MODE"],
+            "model": os.environ["MODEL"],
+            "webSearch": False,
+            "messages": [{
+              "role": "user",
+              "content": (
+                "Respond with ONLY valid JSON in this shape: "
+                '{"incidents":[{"date":"","title":"","narrative":"","categories":[],'
+                '"severity":1,"childrenPresent":false}],"flaggedMessages":[],'
+                '"riskIndicators":[],"caseFacts":[],"impliedFindings":[],"summary":""}\n\n'
+                "DOCUMENT:\n<<<\n" + doc + "\n>>>"
+              ),
+            }],
+          }
+          print(json.dumps(body))
+          PY
+
+          echo "--- POST $URL/api/advocate (mode=$MODE model=$MODEL) ---"
+          code=$(curl -s -o /tmp/out.txt -w '%{http_code}' -m 300 \
+            -X POST -H 'content-type: application/json' \
+            --data @/tmp/body.json \
+            "$URL/api/advocate" || echo "000")
+          echo "HTTP $code"
+          echo "bytes returned: $(wc -c < /tmp/out.txt)"
+          echo "--- first 600 bytes of the reply ---"
+          head -c 600 /tmp/out.txt
+          echo
+          echo "--- last 200 bytes ---"
+          tail -c 200 /tmp/out.txt
+          echo
+          #  is the marker the server appends on a clean finish. Its
+          # absence means the stream died rather than ended.
+          if grep -q $'\004' /tmp/out.txt; then
+            echo "clean finish: yes (DONE marker present)"
+          else
+            echo "clean finish: NO — the stream was cut off"
+          fi
