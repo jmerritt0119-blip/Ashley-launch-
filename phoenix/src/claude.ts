@@ -400,7 +400,7 @@ async function viaDirect(opts: AdvocateOpts): Promise<string> {
     // 10,000 is a ceiling, not a target. A part that needs more than this is a
     // part that should have been smaller, and it is now split and re-read
     // rather than silently truncated.
-    max_tokens: isScan ? 10000 : 32000,
+    max_tokens: isScan ? 3000 : 32000,
     system,
     // Same cache split the site's function makes, so a scan run on her own key
     // is billed the same way as one run through the site — the instructions in

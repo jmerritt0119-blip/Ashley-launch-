@@ -199,7 +199,7 @@ export default async (req) => {
             // of its budget thinking. Scan gets 10,000, below the 16,000 that
             // was surviving on Sonnet, because Opus writes the same catalog
             // more slowly and the limit is wall-clock, not tokens.
-            max_tokens: isChat ? 32000 : 10000,
+            max_tokens: isChat ? 32000 : 3000,
             system,
             messages: convo,
             ...(isChat ? { thinking: { type: 'adaptive' } } : {}),

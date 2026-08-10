@@ -102,40 +102,39 @@ export interface ScanResult {
 /**
  * How much of her archive goes into one Deep Scan request.
  *
- * 16,000 — set by what a part has to WRITE, not by what it can read.
+ * 10,000 — set by a measured wall, at last, instead of by argument.
  *
- * I raised this to 60,000 this morning to give the model back the wide window
- * the first good scan had, and argued that the reasons it had been cut were
- * answered. They were not, and her next real scan came back 504 — the
- * function killed by the platform before the JSON arrived.
+ * A probe sent the app's real prompt at real size to the live endpoint and
+ * watched what happened:
  *
- * #52 had already measured this on her own archive and written it down: what
- * decides whether a part survives is the length of the catalog it has to
- * produce. A sparse stretch finishes easily; a dense one generates for long
- * enough to be killed. Dense, in her archive, means the worst weeks — so the
- * scan fails hardest on exactly the evidence that matters most, and retrying
- * never helps, because the same part takes the same time every attempt.
+ *   HTTP 200 after 60s
+ *   bytes returned: 15,665
+ *   keep-alive bytes present: yes
+ *   clean finish: NO - the stream was cut off
  *
- * I then made it worse in four directions at once: this window tripled, the
- * token ceiling doubled to 32,000, the prompt asked for ~150 flagged messages
- * instead of ~60, and the model went back to Opus, which writes the same
- * catalog more slowly than the Sonnet those numbers were last surviving on.
- * Any one of those lengthens a part. Together they guarantee the failure.
+ * Started 17:01:30, killed 17:02:30. Exactly sixty seconds. That is the
+ * platform's ceiling on the whole request, and nothing on our side gets past
+ * it: the connection was demonstrably open and streaming the entire time.
  *
- * So the window is set from the output budget and nothing else. 16,000
- * characters is a few hundred messages, and ~30 flagged messages out of a few
- * hundred is a cap that almost never binds — which matters more than width,
- * because a cap that binds drops evidence silently and a narrow window only
- * costs context. It sits comfortably above the 8,000 that was proven safe for
- * Opus and well under what just died.
+ * So the real budget is not tokens or characters, it is SECONDS OF WRITING.
+ * Opus emits roughly 50-60 tokens a second, so a part has about 3,000 tokens of
+ * catalog before the wall — which is why every previous cut failed. Each one
+ * reduced how much a part could READ while leaving the ceiling on how much it
+ * could WRITE at three times what fits, so the densest parts kept generating
+ * straight into the guillotine. And dense, in her archive, means the worst
+ * weeks: the scan failed hardest on exactly the evidence that matters most.
  *
- * The context this gives up is real and I am not pretending otherwise: a
- * pattern spanning months is easier to see in one wide read. That is what the
- * whole-case synthesis pass is for — it runs across the merged findings from
- * every part, so the long arc is assembled where there is no execution limit
- * to hit, instead of being paid for in parts that never come back.
+ * Three things now line up with the measurement rather than fighting it:
+ * this window, a 3,000-token ceiling for scans, and a prompt that asks for the
+ * ~12 most significant flagged messages instead of ~30. A part that finishes is
+ * worth more than a wider part that is killed with its catalog half-written.
+ *
+ * The context this gives up is real. That is what the whole-case synthesis pass
+ * is for: it runs across the merged findings from every part, where there is no
+ * sixty-second wall to hit, so the long arc is assembled somewhere it can
+ * actually finish.
  */
-export const SCAN_CHUNK_SIZE = 16_000;
+export const SCAN_CHUNK_SIZE = 10_000;
 
 /**
  * The model every deep scan runs on, regardless of the chat model picker.
@@ -707,7 +706,7 @@ Rules:
   finding you passed over, because she will never learn it was there — nobody
   reads these messages again. Err toward including a borderline item, tagged
   honestly, rather than leaving it out. If this part holds an overwhelming
-  number of similar quotes, keep the ~30 most legally significant
+  number of similar quotes, keep the ~12 most legally significant
   flaggedMessages (favour threats, violence, admissions, sexual content,
   anything involving the child, and her own expressions of fear) and say in
   "summary" how many more of the same pattern exist.
