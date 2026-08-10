@@ -95,6 +95,25 @@ const SCAN_STATE_KEY = "scanInProgress";
  */
 const SCAN_FINDINGS_KEY = "scanFindings";
 
+/**
+ * Is this a failure that trying again cannot fix?
+ *
+ * Every failed part costs five requests: three attempts, then the part is cut
+ * in half and both halves are tried. That is right for an overloaded model or
+ * a dropped connection, and pure waste for "the account is out of credit" —
+ * which will answer the same way every time, for every part, until somebody
+ * adds money. On a 47-part archive that difference is 235 pointless requests
+ * against 1.
+ *
+ * Matched against the server's own words, which are the plain-English messages
+ * the function produces for 401, 402 and 404 — not on status codes, because by
+ * the time the reply reaches here it is text.
+ */
+const isFatalScanError = (message: string) =>
+  /out of credit|billing|credit balance|authentication|api key|not available on this account/i.test(
+    message
+  );
+
 interface SavedScan {
   chunks: string[];
   remaining: number[];
@@ -180,6 +199,19 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
   // double tap can never file the same account twice.
   const savingImplied = useRef<Set<number>>(new Set());
   const [dismissed, setDismissed] = useState<Set<number>>(new Set());
+  /**
+   * The real reason a part failed, shown the moment it happens.
+   *
+   * It was already being captured — and then held back until the whole scan
+   * finished, behind a progress line that told her the part was "too big",
+   * which the code has no way of knowing. So she sat and watched eighty parts
+   * fail, one by one, being given a diagnosis that was a guess, while the
+   * actual sentence the server sent back was sitting in a variable.
+   *
+   * A scan that cannot work should say why in the first thirty seconds, not
+   * after twenty minutes and a hundred billed requests.
+   */
+  const [liveError, setLiveError] = useState<string | null>(null);
   /** How far through the parts she is, and roughly how much longer. */
   const [pct, setPct] = useState<number | null>(null);
   const [eta, setEta] = useState("");
@@ -471,6 +503,7 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     }
     setBusy(true);
     setError(null);
+    setLiveError(null);
     setAdded(null);
     setRemaining([]);
     // Deterministic first: if this is a message export, every row is saved to
@@ -497,6 +530,16 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     // reply, a parse failure — which sent hours of debugging in the wrong
     // direction. Whatever it really is, she and I both get to see it.
     let firstError = "";
+    /** True once a failure arrives that no amount of retrying can fix. */
+    let fatal = false;
+    /** Records the reason once, and puts it on screen straight away. */
+    const noteError = (e: any) => {
+      const message = String(e?.message || e || "unknown");
+      if (isFatalScanError(message)) fatal = true;
+      if (firstError) return;
+      firstError = message;
+      setLiveError(firstError);
+    };
     const parts = partsRef.current;
 
     // A hundred and twenty-five parts is a long time to stare at a screen with
@@ -523,7 +566,10 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
           onDelta: () => {},
         });
         return parseScanResult(out);
-      } catch {
+      } catch (e) {
+        // Was swallowed silently, so when the split-in-half rescue failed too
+        // there was nothing at all to say why.
+        noteError(e);
         return null;
       }
     };
@@ -606,8 +652,9 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
           parts.push(parseScanResult(full || acc));
           ok = true;
         } catch (e: any) {
-          if (!firstError) firstError = String(e?.message || e || "unknown");
-          if (abort.signal.aborted) break;
+          noteError(e);
+          // Nothing to gain from attempts two and three.
+          if (fatal || abort.signal.aborted) break;
           // Before paying for another attempt, check whether the one that just
           // failed already came back with a usable catalog. A part cut off near
           // the end still holds nearly all of its evidence, and re-running it
@@ -639,8 +686,12 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
       // identically however many times it is retried — more attempts just cost
       // more money for the same nothing. Two smaller pieces each have half the
       // work to do, and in practice both complete.
-      if (!ok && !abort.signal.aborted && chunks[idx].length > 6000) {
-        setProgress(`${label} was too big to finish — splitting it and trying again…`);
+      if (!ok && !fatal && !abort.signal.aborted && chunks[idx].length > 6000) {
+        // Says what it is doing, not why it thinks it has to. Splitting is
+        // worth trying whatever went wrong; asserting the part was "too big"
+        // when the reply was actually a rejection is how a whole day gets
+        // spent shrinking things that were never too large.
+        setProgress(`${label} didn't come back — trying it in two smaller pieces…`);
         const mid = chunks[idx].lastIndexOf("\n", Math.floor(chunks[idx].length / 2)) + 1 ||
           Math.floor(chunks[idx].length / 2);
         const halves = [chunks[idx].slice(0, mid), chunks[idx].slice(mid)].filter((h) => h.trim());
@@ -688,6 +739,32 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
       // which used to take the only saved copy of the catalog with it.
       if (parts.length) {
         await saveFindings({ result: mergeScanResults(parts), savedAt: Date.now() });
+      }
+
+      // Stop a scan that cannot work, instead of billing for eighty parts to
+      // prove it.
+      //
+      // When the very first parts all fail, the cause is the request itself —
+      // no credit, a rejected key, a model the account cannot reach — and it
+      // will fail identically every remaining part. Failing parts are the
+      // expensive kind: three attempts plus two half-sized retries, five
+      // requests each, for nothing. A run of failures at the start is a
+      // different event from one part failing in the middle, and only the
+      // second is worth pushing through.
+      if (!abort.signal.aborted && (fatal || (!parts.length && completed >= 8))) {
+        failed.push(...indices.slice(b + batch.length));
+        abort.abort();
+        setLiveError(
+          (firstError || "the scan could not be completed") +
+            (fatal
+              ? "\n\nStopped straight away, because this is not something trying again would fix — " +
+                "every remaining part would come back with the same answer."
+              : "\n\nStopped after the first 8 parts, because every one of them failed the same " +
+                "way, and continuing would have cost money without finding anything.") +
+            " Nothing already in your records has been touched. Once that's sorted, tap scan " +
+            "again — it picks up from here rather than starting over."
+        );
+        break;
       }
     }
 
@@ -1064,6 +1141,33 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
               You can leave this page or close the app — everything found so far is saved, and it
               picks up where it stopped.
             </p>
+          </div>
+        )}
+        {liveError && (
+          // Right under the progress bar, where she is already looking, the
+          // moment the first part fails — not twenty minutes later.
+          <div className="notice" style={{ marginTop: 10 }}>
+            <strong>A part came back with this:</strong>
+            <p style={{ whiteSpace: "pre-wrap", margin: "6px 0" }}>{liveError}</p>
+            {/(credit|balance|billing)/i.test(liveError) && (
+              <p className="small" style={{ margin: "6px 0 0" }}>
+                This is the account paying for the AI, not anything about your case or your
+                file. Everything already saved is safe.{" "}
+                <a
+                  href="https://console.anthropic.com/settings/billing"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Add credit
+                </a>
+                , then tap scan again — it carries on from where it stopped.
+              </p>
+            )}
+            {/(authentication|api key|rejected)/i.test(liveError) && (
+              <p className="small" style={{ margin: "6px 0 0" }}>
+                This is the site's API key, not your data. Nothing in your file is affected.
+              </p>
+            )}
           </div>
         )}
         {progress && <p className="muted small" style={{ marginTop: 8 }}>{progress}</p>}
