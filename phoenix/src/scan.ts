@@ -222,7 +222,7 @@ Respond with ONLY valid JSON — no markdown fences, no commentary before or aft
   ],
   "riskIndicators": [
     {
-      "type": "one of: threat to kill, strangulation or choking, weapon access or reference, threat to take or harm the child, stalking or surveillance, threat of suicide as leverage, sexual coercion, escalation after separation, extreme jealousy or possessiveness, threat to have her deported or reported, threat to expose intimate images",
+      "type": "one of: threat to kill, strangulation or choking, weapon access or reference, gun in the home, threat to take or harm the child, violence toward the child, stalking or surveillance, threat of suicide as leverage, sexual coercion, forced sex, violence during pregnancy, escalation in frequency or severity, escalation after separation, extreme jealousy or possessiveness, controls her daily activities, threat to have her deported or reported, threat to expose intimate images, violation of a court order, harm or threats to a pet, threat to destroy her livelihood",
       "quote": "the exact words from the document, verbatim",
       "date": "YYYY-MM-DD or \\"\\"",
       "why": "one sentence on why this matters for her safety"
@@ -304,6 +304,113 @@ degradation, threats tied to sex. This is the category most often missed,
 because inside a marriage almost nobody writes it down plainly — see READ
 BETWEEN THE LINES below, and treat it as a primary target rather than an
 afterthought.
+
+THE LETHALITY SCREEN — the questions that predict a homicide
+Decades of domestic-homicide research have identified which facts, in the
+months before a killing, distinguished the women who were killed from the women
+who were beaten and survived. They do not look dramatic on the page, and this
+is the single most important list in this document, because it is the one that
+decides whether she is safe tonight. Search for every one of them explicitly
+and put anything you find in riskIndicators even if she never treated it as
+significant, and even if it appears only once:
+- Strangulation, choking, hands on the throat, a hand over her mouth or nose,
+  anything about her breathing or passing out. Non-fatal strangulation raises
+  the odds of later homicide roughly sevenfold and is the strongest single
+  predictor in the literature. Any reference at all, however oblique, however
+  minimised by either of them, is a finding.
+- A gun in the home, access to one, buying one, cleaning one in front of her,
+  or mentioning one during an argument.
+- Threats to kill her, the child, himself, or a pet — including conditional
+  and joking forms ("if you ever left I'd", "they'd never find you").
+- Forced or coerced sex, and any sexual act she describes not agreeing to.
+- Violence, threats, or heightened control during a pregnancy.
+- Escalation: the same act getting more frequent, more severe, or spreading to
+  new targets. Say so explicitly in the summary when you see a trajectory.
+- Escalation after separation, filing, or her telling anyone. The period after
+  she leaves is the most dangerous, and the record often shows it starting.
+- Constant jealousy, accusations of cheating, controlling her daily movements.
+- Stalking: following, waiting, tracking, showing up, contact through others
+  or new numbers after being blocked.
+- Threats of suicide used to stop her leaving.
+- Any violation of an existing court order, however small.
+
+COERCIVE CONTROL — the eight tactics, checked one at a time
+Coercive control is a pattern, not an event, and Texas courts increasingly
+recognise it. Walk this list deliberately and look for each tactic separately,
+because the ones nobody names are the ones that get missed:
+1. Coercion and threats — threats to hurt her, leave her, report her, take the
+   child, self-harm; making her drop charges or do illegal things.
+2. Intimidation — looks, gestures, smashing things, destroying her property,
+   displaying weapons, harming pets, driving dangerously with her in the car.
+3. Emotional abuse — degrading her, name-calling, mind games, humiliation,
+   making her feel she is going mad or that she is a bad mother.
+4. Isolation — controlling who she sees, where she goes, what she reads;
+   using jealousy to justify it; cutting her off from family and friends.
+5. Minimising, denying and blaming — saying it didn't happen, that it wasn't
+   serious, that she caused it, shifting responsibility for his conduct.
+6. Using the child — using her as messenger or spy, undermining her parenting,
+   threatening custody, using visitation to keep contact and control.
+7. Entitlement — treating her as a servant, making all the big decisions,
+   defining the roles, expecting compliance as of right.
+8. Economic abuse — controlling money and accounts, forbidding or sabotaging
+   her work, making her ask for money, hiding assets, debt in her name.
+
+WHAT THE LAW NEEDS IN TEXAS — capture the facts that map onto findings
+You are not giving legal advice, but knowing what a court must find tells you
+what is worth flagging:
+- Family violence means an act intended to result in physical harm, bodily
+  injury, assault or sexual assault, OR a threat that reasonably places her in
+  fear of imminent harm. A credible threat qualifies with no injury at all, so
+  threats are evidence in their own right, not lesser evidence.
+- A protective order turns on family violence having occurred and being likely
+  to occur again — so anything showing continuation, repetition, or escalation
+  is directly load-bearing, as is anything after a previous order.
+- Conservatorship: a documented history of family violence weighs heavily
+  against giving him joint or primary custody, and violence toward the child or
+  in the child's presence weighs heaviest. Flag every instance where the child
+  saw, heard, was present for, or was used in an incident.
+- Strangulation and violence in front of a child are treated far more seriously
+  than ordinary assault, which is why the oblique references matter so much.
+- His own words are admissible against him as statements of a party opponent.
+  Anything he wrote is the strongest and cheapest evidence in the case — quote
+  it exactly and never paraphrase it.
+
+POST-SEPARATION ABUSE — it changes shape rather than stopping
+When physical proximity ends, control moves to the channels that remain. Look
+for: litigation used as a weapon (threats to bankrupt her on fees, to drag it
+out, to take the child through the courts, repeated filings); the exchange
+itself used for contact, lateness, or confrontation; the child used as courier,
+informant, or bargaining chip; support withheld or made conditional; false or
+threatened reports to CPS, police, immigration, her employer or her licensing
+board; and campaigns to her family, friends, or workplace to isolate her.
+
+TECHNOLOGY AND ACCESS — the modern surveillance that hides in plain sight
+Location sharing he set up or refuses to turn off, trackers in her car or bag,
+Find My, shared iCloud or Google accounts, a family phone plan he controls,
+her passwords, her email, her messages, cameras in the home pointed inward,
+monitoring through the child's phone or tablet, reading this conversation.
+Anything showing he can see her activity supports both a protective order and
+the argument that her evidence has to be protected from him.
+
+HER OWN WORDS — the effect on her is itself evidence
+Most catalogs record only what he did. What she wrote proves what it did to
+her, and fear is an element the court has to find. Flag her messages showing:
+fear or walking on eggshells; apologising for things she did not do or
+pre-emptively; asking permission for ordinary things; thanking him for normal
+freedoms; checking in constantly to avoid trouble; minimising or excusing his
+conduct; describing injuries, pain, or not sleeping; saying she cannot tell
+anyone; or asking him to stop. These belong in flaggedMessages with her as the
+sender, and they matter as much as his.
+
+PATTERN OVER TIME — the shape only a scanner can see
+She has lived this one day at a time and cannot see the arc. You can. In the
+summary, say plainly: whether incidents get more frequent or more severe over
+the period; whether they cluster around identifiable triggers (her leaving or
+threatening to, filing, court dates, pregnancy, his job loss, drinking,
+holidays, exchanges); and whether there is a repeating cycle of tension, an
+incident, then apology or affection followed by the same thing again. Name the
+dates that anchor the trajectory. That paragraph is often the most useful thing
+her attorney reads.
 
 ADMISSIONS AND CORROBORATION — anything where he admits, minimizes,
 apologizes for, or explains away his own conduct ("I shouldn't have grabbed
@@ -467,7 +574,19 @@ Rules:
   "Be conservative" means do not inflate a 3 into a 5. It does NOT mean avoiding
   5 — a 5 that is recorded as a 3 buries the evidence that decides a protective
   order, and those are the entries her attorney and the court need first.
-- Stay within limits: if this part holds an overwhelming number of similar quotes, keep the ~60 most legally significant flaggedMessages (favor threats, violence, admissions, and anything involving children) and note in "summary" that more of the same pattern exists.
+- Completeness is the whole job. The failure that costs her the case is a
+  finding you passed over, because she will never learn it was there — nobody
+  reads these messages again. Err toward including a borderline item, tagged
+  honestly, rather than leaving it out. If this part holds an overwhelming
+  number of similar quotes, keep the ~150 most legally significant
+  flaggedMessages (favour threats, violence, admissions, sexual content,
+  anything involving the child, and her own expressions of fear) and say in
+  "summary" how many more of the same pattern exist.
+- Before you finish, check the list once: did you look for strangulation, for a
+  weapon, for forced sex, for violence in pregnancy, for threats to the child,
+  for surveillance, for money control, for isolation, and for her own fear? If
+  a category is genuinely absent from this part, that is a fine answer — but
+  answer it deliberately rather than by not looking.
 - If the document contains nothing relevant, return empty arrays and say so in "summary".
 
 DOCUMENT:
