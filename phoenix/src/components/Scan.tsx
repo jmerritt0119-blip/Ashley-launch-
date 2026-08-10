@@ -494,14 +494,44 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
       if (busy || chunksRef.current.length || partsRef.current.length) return;
       const saved = await loadScanState();
       if (saved) {
-        chunksRef.current = saved.chunks;
+        // Re-cut oversized parts before offering to resume.
+        //
+        // A saved scan carries the exact pieces it was cut into when it
+        // started, and part sizes have come down since — 60,000 characters,
+        // then 20,000, now 16,000, each cut because parts were being killed
+        // mid-stream by the platform's execution limit. Handing those same
+        // oversized pieces back to the model reproduces the timeout that
+        // stopped the scan in the first place, and bills for it. That is a 504
+        // on resume, over and over, for as long as the saved state survives.
+        //
+        // So anything larger than the current size is re-cut here, and the
+        // list of parts still to do is remapped onto the new pieces. What has
+        // already been read is untouched.
+        const rechunked: string[] = [];
+        const remap = new Map<number, number[]>();
+        saved.chunks.forEach((c, i) => {
+          const pieces = c.length > SCAN_CHUNK_SIZE ? chunkScanInput(c) : [c];
+          remap.set(
+            i,
+            pieces.map((p) => {
+              rechunked.push(p);
+              return rechunked.length - 1;
+            })
+          );
+        });
+        const newRemaining = saved.remaining.flatMap((i) => remap.get(i) ?? []);
+        const wasRecut = rechunked.length !== saved.chunks.length;
+        chunksRef.current = rechunked;
         partsRef.current = saved.parts;
-        setRemaining(saved.remaining);
+        setRemaining(newRemaining);
         if (saved.parts.length) applyMerged(mergeScanResults(saved.parts));
         setLoadedNote(
-          `You have an unfinished scan — ${saved.remaining.length} of ${saved.total} parts left. ` +
+          `You have an unfinished scan — ${newRemaining.length} of ${rechunked.length} parts left. ` +
             `Everything already read is below and saved. Tap "Scan remaining parts" to finish; ` +
-            `you do not need to upload anything again.`
+            `you do not need to upload anything again.` +
+            (wasRecut
+              ? " The remaining parts have been cut smaller than they were, so they finish instead of timing out."
+              : "")
         );
         return;
       }
@@ -766,25 +796,57 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
       // identically however many times it is retried — more attempts just cost
       // more money for the same nothing. Two smaller pieces each have half the
       // work to do, and in practice both complete.
-      if (!ok && !fatal && !abort.signal.aborted && chunks[idx].length > 6000) {
+      if (!ok && !fatal && !abort.signal.aborted && chunks[idx].length > 3000) {
         // Says what it is doing, not why it thinks it has to. Splitting is
         // worth trying whatever went wrong; asserting the part was "too big"
         // when the reply was actually a rejection is how a whole day gets
         // spent shrinking things that were never too large.
-        setProgress(`${label} didn't come back — trying it in two smaller pieces…`);
-        const mid = chunks[idx].lastIndexOf("\n", Math.floor(chunks[idx].length / 2)) + 1 ||
-          Math.floor(chunks[idx].length / 2);
-        const halves = [chunks[idx].slice(0, mid), chunks[idx].slice(mid)].filter((h) => h.trim());
+        setProgress(`${label} didn't come back — trying it in smaller pieces…`);
+        // Keep halving until it fits, rather than halving once and giving up.
+        //
+        // One split assumes half is always small enough. It is not: a part
+        // three times the current size needs two splits, and the old code paid
+        // for both halves, watched both fail for the same reason, and reported
+        // the part as lost. A piece that still cannot finish is split again,
+        // down to a floor below which the problem is certainly not size.
+        const halve = (s: string) => {
+          const mid =
+            s.lastIndexOf("\n", Math.floor(s.length / 2)) + 1 || Math.floor(s.length / 2);
+          return [s.slice(0, mid), s.slice(mid)].filter((h) => h.trim());
+        };
+        const FLOOR = 3000;
+        // TWO levels, so at most four pieces — and that ceiling is about money,
+        // not tidiness.
+        //
+        // Splitting all the way down to the floor sounds thorough and is a
+        // billing accident waiting to happen: when parts fail for a reason that
+        // is not size — a dropped stream, an overloaded model — every piece
+        // fails too, and each failure buys two more requests. Measured on a
+        // stubbed run where every reply was cut short, halving to the floor
+        // turned 8 parts into 136 requests. Four pieces covers a part up to
+        // four times too large, which is every real case here, and caps the
+        // damage at four requests when the cause was never size at all.
+        const MAX_DEPTH = 2;
+        const queue: { text: string; depth: number }[] = halve(chunks[idx]).map((t) => ({
+          text: t,
+          depth: 1,
+        }));
         let rescued = 0;
-        for (const h of halves) {
-          if (abort.signal.aborted) break;
-          const r = await scanPiece(h, idx + 1, chunks.length);
+        let lost = false;
+        while (queue.length) {
+          if (abort.signal.aborted || fatal) break;
+          const piece = queue.shift() as { text: string; depth: number };
+          const r = await scanPiece(piece.text, idx + 1, chunks.length);
           if (r) {
             parts.push(r);
             rescued++;
+          } else if (piece.depth < MAX_DEPTH && piece.text.length > FLOOR) {
+            queue.push(...halve(piece.text).map((t) => ({ text: t, depth: piece.depth + 1 })));
+          } else {
+            lost = true;
           }
         }
-        if (rescued === halves.length) ok = true;
+        if (rescued > 0 && !lost) ok = true;
       }
       // A part that did not finish is a part still to do — including one that
       // was in flight when she pressed Stop.
