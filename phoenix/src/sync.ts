@@ -35,6 +35,39 @@ async function readError(res: Response, fallback: string): Promise<string> {
 }
 
 /**
+ * gzip a string to base64, using the browser's own compressor.
+ *
+ * Her case is 24,928 messages of English text plus repeated JSON keys — about
+ * five megabytes of it, most of which is structure rather than content. The
+ * vault upload is one request, and the platform will not carry five megabytes.
+ * Compressed it is under two.
+ */
+async function packJson(value: unknown): Promise<string | null> {
+  if (typeof CompressionStream === "undefined") return null;
+  const json = JSON.stringify(value);
+  const stream = new Blob([json]).stream().pipeThrough(new CompressionStream("gzip"));
+  const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+  // Chunked so a multi-megabyte archive cannot blow the argument limit on
+  // String.fromCharCode, which is exactly the sort of thing that only fails on
+  // the largest — and most important — case files.
+  let bin = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
+}
+
+/** The reverse. */
+async function unpackJson(b64: string): Promise<any> {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return JSON.parse(await new Response(stream).text());
+}
+
+/**
  * Encrypt everything on-device and upload the ciphertext.
  *
  * When a recovery key is supplied we also store a tiny second envelope holding
@@ -51,7 +84,13 @@ export async function pushVault(
 ): Promise<{ savedAt: number; filesDropped: boolean }> {
   const send = async (withFiles: boolean) => {
     const data = await exportAllData(withFiles);
-    const envelope: any = await encryptJson(data, passphrase);
+    // Compressed BEFORE encryption — encrypted bytes are noise and do not
+    // compress. A browser too old for CompressionStream sends it as it was.
+    const packed = await packJson(data);
+    const envelope: any = await encryptJson(
+      packed === null ? data : { phxGzip: 1, z: packed },
+      passphrase
+    );
     if (recoveryKey) {
       envelope.escrow = await encryptJson({ passphrase }, recoveryKey);
     }
@@ -92,6 +131,11 @@ export async function pullVault(code: string, passphrase: string): Promise<numbe
     data = await decryptJson(envelope, passphrase);
   } catch {
     throw new Error("That passphrase doesn't open this vault. Check it and try again.");
+  }
+  // Vaults saved before compression carry the case directly; newer ones carry
+  // it packed. Both open.
+  if (data && data.phxGzip && typeof data.z === "string") {
+    data = await unpackJson(data.z);
   }
   await importAllData(data);
   return (envelope.savedAt as number) || Date.now();
