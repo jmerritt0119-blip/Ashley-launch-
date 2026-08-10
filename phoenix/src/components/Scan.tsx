@@ -50,12 +50,56 @@ const today = () => new Date().toISOString().slice(0, 10);
  */
 const SCAN_STATE_KEY = "scanInProgress";
 
+/**
+ * The findings themselves, kept separately from the unfinished-scan state.
+ *
+ * They needed their own key because of the shape of the other one: the
+ * in-progress record is deliberately deleted the moment nothing is left to do,
+ * and it is only ever restored when parts remain. Both of those are right for
+ * resuming a scan and catastrophic for keeping a finished one. A scan that ran
+ * all the way to the end therefore wiped its own saved copy on the last batch
+ * and left the entire catalog in React state alone — so closing the tab,
+ * reloading, or a phone dropping a backgrounded page threw away every finding,
+ * silently, at the exact moment the scan had just succeeded.
+ *
+ * That is the one failure that looks identical to "the scan found nothing".
+ *
+ * Written after every batch and kept after the scan ends. Cleared only when she
+ * files the findings into her records, which is the one point where keeping
+ * them would risk adding the same incident twice.
+ */
+const SCAN_FINDINGS_KEY = "scanFindings";
+
 interface SavedScan {
   chunks: string[];
   remaining: number[];
   parts: ScanResult[];
   total: number;
   savedAt: number;
+}
+
+interface SavedFindings {
+  result: ScanResult;
+  savedAt: number;
+}
+
+async function saveFindings(v: SavedFindings | null): Promise<void> {
+  try {
+    if (v) await db.kv.put({ key: SCAN_FINDINGS_KEY, value: v });
+    else await db.kv.delete(SCAN_FINDINGS_KEY);
+  } catch {
+    /* a scan must never fail because progress could not be written */
+  }
+}
+
+async function loadFindings(): Promise<SavedFindings | null> {
+  try {
+    const row = await db.kv.get(SCAN_FINDINGS_KEY);
+    const v = row?.value as SavedFindings | undefined;
+    return v?.result ? v : null;
+  } catch {
+    return null;
+  }
 }
 
 async function saveScanState(v: SavedScan | null): Promise<void> {
@@ -327,17 +371,36 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     }
     // Nothing handed over — pick up an unfinished scan if one was left behind.
     void (async () => {
-      if (busy || chunksRef.current.length) return;
+      if (busy || chunksRef.current.length || partsRef.current.length) return;
       const saved = await loadScanState();
-      if (!saved) return;
-      chunksRef.current = saved.chunks;
-      partsRef.current = saved.parts;
-      setRemaining(saved.remaining);
-      if (saved.parts.length) applyMerged(mergeScanResults(saved.parts));
+      if (saved) {
+        chunksRef.current = saved.chunks;
+        partsRef.current = saved.parts;
+        setRemaining(saved.remaining);
+        if (saved.parts.length) applyMerged(mergeScanResults(saved.parts));
+        setLoadedNote(
+          `You have an unfinished scan — ${saved.remaining.length} of ${saved.total} parts left. ` +
+            `Everything already read is below and saved. Tap "Scan remaining parts" to finish; ` +
+            `you do not need to upload anything again.`
+        );
+        return;
+      }
+      // No scan to resume, but a finished one may have left findings she never
+      // filed. Those used to vanish on reload; they are hers until she says
+      // otherwise.
+      const kept = await loadFindings();
+      if (!kept) return;
+      // Seeded as a single part so anything scanned from here merges with it
+      // instead of replacing it — the merge deduplicates, so re-finding the
+      // same incident cannot double it.
+      partsRef.current = [kept.result];
+      applyMerged(kept.result);
+      const n = kept.result.incidents.length + kept.result.messages.length;
+      const when = kept.savedAt ? new Date(kept.savedAt).toLocaleDateString() : "";
       setLoadedNote(
-        `You have an unfinished scan — ${saved.remaining.length} of ${saved.total} parts left. ` +
-          `Everything already read is below and saved. Tap "Scan remaining parts" to finish; ` +
-          `you do not need to upload anything again.`
+        `Still here — ${n.toLocaleString()} finding${n === 1 ? "" : "s"} from your scan` +
+          `${when ? ` on ${when}` : ""}, saved on this device. Nothing has been added to your ` +
+          `records yet; review them below and add the ones you want.`
       );
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -487,8 +550,7 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
           const full = await streamAdvocate({
             connection: settings.connection,
             apiKey: settings.apiKey,
-            // Scans are pinned to Opus regardless of the chat model picker —
-            // cataloging must be as careful as the case deserves.
+            // Pinned to SCAN_MODEL regardless of the chat model picker.
             model: SCAN_MODEL,
             history: [
               {
@@ -586,6 +648,12 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
           ? { chunks, remaining: stillToDo, parts, total: chunks.length, savedAt: Date.now() }
           : null
       );
+      // The findings outlive the scan that produced them. The line above
+      // deletes the resume record as soon as there is nothing left to resume,
+      // which used to take the only saved copy of the catalog with it.
+      if (parts.length) {
+        await saveFindings({ result: mergeScanResults(parts), savedAt: Date.now() });
+      }
     }
 
     // Record which scanner produced these results, so a later, better one can
@@ -778,6 +846,11 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     setLoadedNote(null);
     chunksRef.current = [];
     partsRef.current = [];
+    // Filed into her records now, so the working copy is cleared — otherwise a
+    // reload would offer the same findings again and adding them twice would
+    // put duplicate incidents in her case file.
+    await saveFindings(null);
+    await saveScanState(null);
   };
 
   return (
@@ -1001,9 +1074,9 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
           </div>
         )}
         <p className="muted small" style={{ marginTop: 8 }}>
-          Deep scans always run on Claude Opus 5. A very large export takes a while — keep this
-          tab open; you can stop anytime and finish later, and results appear below as each part
-          completes.
+          Deep scans always run on Claude Sonnet 5, whatever the chat is set to. A very large
+          export takes a while — you can leave this page or close the app; everything found is
+          saved as it goes, and results appear below as each part completes.
         </p>
       </div>
 
