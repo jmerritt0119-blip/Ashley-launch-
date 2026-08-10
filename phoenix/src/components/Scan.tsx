@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { addMessagesDeduped, db } from "../db";
+import { addMessagesDeduped, db, isTimestampOnly } from "../db";
 import { streamAdvocate } from "../claude";
 import { handoff } from "../handoff";
 import {
@@ -21,6 +21,7 @@ import {
   parseCaseAnalysis,
   type CaseAnalysis,
 } from "../synthesis";
+import { takeSnapshot } from "../safety";
 import { readAnyFiles } from "../readAnyFile";
 import { messagesFromCsv, type ParsedMessage } from "../parseMessages";
 import type { Settings } from "../settings";
@@ -250,6 +251,29 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
   const [senders, setSenders] = useState<{ name: string; count: number }[]>([]);
   /** How many messages she already has, so the re-scan button knows to appear. */
   const archivedCount = useLiveQuery(() => db.messages.count(), [], 0);
+  /**
+   * How many saved messages have a date where their words should be.
+   *
+   * Counted rather than assumed, because this decides whether she is shown a
+   * repair plan or left alone. Computed on demand instead of live: it reads
+   * every row, and on her archive that is 25,000 of them.
+   */
+  const [broken, setBroken] = useState<number | null>(null);
+  /** Set once she has cleared, so the steps keep guiding her to the end. */
+  const [repairing, setRepairing] = useState(false);
+  const countBroken = async () => {
+    try {
+      const rows = await db.messages.toArray();
+      setBroken(rows.reduce((n, m) => n + (isTimestampOnly(m.text || "") ? 1 : 0), 0));
+    } catch {
+      setBroken(null);
+    }
+  };
+  useEffect(() => {
+    void countBroken();
+    // Re-counted whenever the archive size changes — after an import, and
+    // after a clear.
+  }, [archivedCount]);
   const docRef = useRef<string>("");
   const fileRef = useRef<HTMLInputElement>(null);
   const shotRef = useRef<HTMLInputElement>(null);
@@ -886,6 +910,64 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
    * archive is all that is needed. One button, always available once she has
    * messages, no file, no hunting.
    */
+  /**
+   * Empties the message list so she can add her export again cleanly.
+   *
+   * Messages only. Incidents, documents, evidence files, her journal and
+   * everything she has written stay untouched — those are her work, and this
+   * button exists to undo an import fault, not to wipe her case.
+   *
+   * A restore point is taken first, so if the wrong button was pressed at the
+   * worst possible moment, it is recoverable.
+   */
+  /**
+   * Which of the three steps she is on.
+   *
+   * 1 — there are still broken messages saved, so clear them
+   * 2 — the list is empty, so add the file
+   * 3 — real messages are saved, so scan them
+   */
+  const step = broken && broken > 0 ? 1 : archivedCount === 0 ? 2 : 3;
+  /**
+   * Show the plan when the archive is actually broken, and keep showing it
+   * until she has been walked all the way to a scan — otherwise clearing makes
+   * the instructions vanish at the exact moment she needs step two.
+   */
+  const needsRepair = (broken !== null && broken > 0) || (repairing && step < 3) || (repairing && step === 3);
+
+  const clearArchive = async () => {
+    const n = archivedCount || 0;
+    if (
+      !confirm(
+        `Remove all ${n.toLocaleString()} saved messages and start the message list over?\n\n` +
+          "Your incidents, documents, photos and notes are NOT touched — only the message list.\n\n" +
+          "Do this if your messages imported showing only a date instead of what was said. " +
+          "Afterwards, add your export file again and it will come in properly.\n\n" +
+          "A restore point is saved first, so this can be undone."
+      )
+    )
+      return;
+    setError(null);
+    setProgress("Saving a restore point…");
+    try {
+      await takeSnapshot("before clearing the message list");
+      setProgress("Clearing the message list…");
+      setRepairing(true);
+      await db.messages.clear();
+      // Any half-finished scan refers to messages that no longer exist.
+      await saveScanState(null);
+      await saveFindings(null);
+      setProgress("");
+      setLoadedNote(null);
+      setError(
+        "Your message list is empty and a restore point was saved. Tap “Upload file” and add your export again — it will come in with what was actually said, and each message marked with who sent it."
+      );
+    } catch (e: any) {
+      setProgress("");
+      setError("Couldn't clear the message list: " + (e?.message || "unknown error"));
+    }
+  };
+
   const rescanArchive = async () => {
     setError(null);
     setProgress("Reading your archive…");
@@ -1139,6 +1221,59 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
             </span>
           </p>
         )}
+        {/*
+          One thing to do at a time, in order, with the reason in plain words.
+          She is not debugging an import bug; she is being told which button to
+          press next and what it will do.
+        */}
+        {needsRepair && !busy && (
+          <div
+            className="card"
+            style={{ borderLeft: "4px solid var(--accent, #b4462f)", padding: 12, margin: "10px 0" }}
+          >
+            <strong>Your messages need adding again — three steps, about two minutes.</strong>
+            <p className="small" style={{ marginTop: 6 }}>
+              {broken
+                ? `${broken.toLocaleString()} of your saved messages came in showing only a date, with none of what was actually said. That was a fault in how the file was read, and it is fixed now — but the messages already saved have to be added again before a scan can find anything in them.`
+                : "Your message list is empty. Add your export file and it will come in with what was actually said, and each message marked with who sent it."}
+            </p>
+            <ol className="small" style={{ lineHeight: 2, paddingLeft: 20, margin: "8px 0 0" }}>
+              <li>
+                <strong>{step > 1 ? "✓ Cleared" : "Clear the old messages."}</strong>{" "}
+                {step === 1 && (
+                  <>
+                    Your incidents, documents and photos are not touched.{" "}
+                    <button className="btn sm" onClick={() => void clearArchive()}>
+                      Clear my messages
+                    </button>
+                  </>
+                )}
+              </li>
+              <li>
+                <strong>{step > 2 ? "✓ Added" : "Add your export file again."}</strong>{" "}
+                {step === 2 && (
+                  <>
+                    The same file you used before.{" "}
+                    <button className="btn sm" onClick={() => fileRef.current?.click()}>
+                      Choose my file
+                    </button>
+                  </>
+                )}
+              </li>
+              <li>
+                <strong>Scan it, and save what it finds.</strong>{" "}
+                {step === 3 && (
+                  <>
+                    Leave it running until it finishes.{" "}
+                    <button className="btn sm" onClick={() => void rescanArchive()}>
+                      Scan my {archivedCount.toLocaleString()} messages
+                    </button>
+                  </>
+                )}
+              </li>
+            </ol>
+          </div>
+        )}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button className="btn" disabled={busy || needsKey || !text.trim()} onClick={() => void run()}>
             {busy ? "Scanning…" : "Scan & catalog"}
@@ -1182,6 +1317,23 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
           <button className="btn ghost" disabled={busy} onClick={() => fileRef.current?.click()}>
             Upload file (.csv, .txt…)
           </button>
+          {/*
+            Here, not buried in settings.
+            Her messages imported with the date where the words should have
+            been, so the fix is: empty the message list, add the file again.
+            That is two taps on the screen she is already looking at, and it
+            touches nothing except messages — every incident, document, photo
+            and note she has built stays exactly where it is.
+          */}
+          {!busy && !!archivedCount && !needsRepair && (
+            <button
+              className="btn ghost"
+              onClick={() => void clearArchive()}
+              title="Empties the message list only — your incidents, documents and evidence are untouched"
+            >
+              Clear messages & start over
+            </button>
+          )}
           <button className="btn ghost" disabled={busy} onClick={() => shotRef.current?.click()}>
             Add screenshots (OCR)
           </button>
