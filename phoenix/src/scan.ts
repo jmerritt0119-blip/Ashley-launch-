@@ -92,23 +92,31 @@ export interface ScanResult {
 /**
  * How much of her archive goes into one Deep Scan request.
  *
- * 60,000, then 30,000, now 8,000 — and the reason it kept having to come down
- * is that the binding limit is not the model's context, it is how long the
- * serverless function is allowed to stay alive.
+ * Back to 60,000 — what the first scan used, the one that found her cases and
+ * ranked them.
  *
- * A part is only as slow as the JSON it has to WRITE. A sparse stretch of
- * messages produces a short catalog and finishes easily; a dense one — which
- * in her archive means the worst weeks, the parts that matter most — produces
- * thousands of tokens of findings and gets killed mid-stream. That is why some
- * parts always worked and others always failed however many times they were
- * retried, and why turning off thinking helped but did not fix it.
+ * It went 60,000 → 30,000 → 8,000 → 20,000, each cut made to stop parts dying
+ * mid-stream, and each one narrowed what the model can see at once. That is
+ * not a neutral trade. Abuse is a pattern, and a pattern is only visible in a
+ * window wide enough to hold it: the message in March that explains the one in
+ * June, the apology that follows an argument three days later, the same threat
+ * escalating over a month. At 20,000 characters the model reads a few hundred
+ * messages in isolation and answers well about each of them. At 60,000 it reads
+ * the conversation.
  *
- * Eight thousand characters is roughly two thousand tokens in, and no part can
- * then produce enough output to run past the limit. It means many more parts,
- * but each one completes, each one is saved the moment it does, and a scan that
- * takes longer and finishes beats a fast one that dies on the evidence.
+ * The two reasons it was cut have both been answered since. Output headroom
+ * doubled (max_tokens 8,000 → 16,000), so a dense part has room to write its
+ * catalog — that was the original truncation problem. And a part that still
+ * cannot finish is now cut in half and retried automatically, so the failure
+ * mode this constant was protecting against is handled where it happens
+ * instead of by making every part small forever.
+ *
+ * It is also cheaper. The instructions in front of the document are ~4,400
+ * tokens and are re-sent with every single part; tripling the part size cuts
+ * her archive from about 47 parts to about 16, which removes two thirds of
+ * that repetition along with two thirds of the requests that can fail.
  */
-export const SCAN_CHUNK_SIZE = 20_000;
+export const SCAN_CHUNK_SIZE = 60_000;
 
 /**
  * The model every deep scan runs on, regardless of the chat model picker.

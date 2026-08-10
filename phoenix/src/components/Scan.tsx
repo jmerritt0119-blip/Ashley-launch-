@@ -706,7 +706,17 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
         }
         if (rescued === halves.length) ok = true;
       }
-      if (!ok && !abort.signal.aborted) failed.push(idx);
+      // A part that did not finish is a part still to do — including one that
+      // was in flight when she pressed Stop.
+      //
+      // This used to exclude aborted parts, on the reasoning that stopping is
+      // not a failure. But four parts run at once, so Stop lands in the middle
+      // of up to four of them, and excluding those meant they were dropped:
+      // never scanned, never saved, and never listed as remaining. On a 60,000
+      // character part that is a quarter of a million characters of her archive
+      // disappearing from the run, while the screen said the scan had merely
+      // stopped. She could tap "Scan remaining parts" and still never get them.
+      if (!ok) failed.push(idx);
       // Published the instant this part returns — she should watch findings
       // appear one at a time, not in silence and then four at once.
       if (parts.length) {
