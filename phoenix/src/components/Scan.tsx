@@ -2020,6 +2020,32 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
               ))}
             </div>
           )}
+
+          {/*
+            The same save button again, at the end.
+            There was only one, above a list of up to 800 findings, so anyone
+            who read to the bottom — the careful thing to do before writing
+            entries into a case file — arrived with nothing to press.
+          */}
+          {(result.incidents.length > 0 || result.messages.length > 0) && (
+            <div className="panel">
+              <h2>Ready to save</h2>
+              <p className="small muted" style={{ marginTop: 0 }}>
+                Anything still ticked above goes into your records. Untick what you do not
+                want kept — you can always scan again, but this is the moment to leave
+                the small stuff out.
+              </p>
+              <button className="btn" disabled={busy} onClick={() => void commit()}>
+                Add {pickedInc.size + pickedMsg.size} selected to my records
+              </button>
+              {busy && (
+                <p className="muted small" style={{ marginTop: 6 }}>
+                  Available as soon as the scan stops — press “Stop — keep what's found so
+                  far” if you want to save now.
+                </p>
+              )}
+            </div>
+          )}
         </>
       )}
     </div>
