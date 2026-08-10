@@ -118,7 +118,15 @@ const SCAN_FINDINGS_KEY = "scanFindings";
  * the time the reply reaches here it is text.
  */
 const isFatalScanError = (message: string) =>
-  /out of credit|billing|credit balance|authentication|api key|not available on this account/i.test(
+  // "usage limit" and "regain access" are here because of a real reply from the
+  // live endpoint: "You have reached your specified API usage limits. You will
+  // regain access on 2026-09-01." That is an account ceiling, not a shortage —
+  // no amount of retrying, splitting or waiting a few minutes touches it, and
+  // it does not contain any of the words this used to look for. Without a match
+  // it was treated as a transient failure: every part retried, every part
+  // split, every request billed, and the sentence itself — which is about
+  // somebody's account limits — rendered straight onto her screen.
+  /out of credit|billing|credit balance|authentication|api key|not available on this account|usage limit|regain access|quota/i.test(
     message
   );
 

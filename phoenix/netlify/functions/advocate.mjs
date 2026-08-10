@@ -238,6 +238,14 @@ export default async (req) => {
           message = 'The Anthropic account is out of credit. Add billing credit in the Anthropic console, then try again.';
         } else if (status === 404 || (low.includes('model') && (low.includes('not') || low.includes('found')))) {
           message = `That model is not available on this account. Try switching models in Settings. ${raw.slice(0, 120)}`;
+        } else if (low.includes('usage limit') || low.includes('spend limit') || low.includes('regain access')) {
+          // Distinct from both rate limiting and running out of credit: a
+          // ceiling somebody configured on the account, which does not clear
+          // by waiting a moment or by adding money. Kept explicit so whoever
+          // runs this site can see the real reason in the deploy check and the
+          // function logs. The app never shows this sentence to her — the
+          // client treats it as fatal and renders a neutral message instead.
+          message = `The account's configured API usage limit has been reached. Raise the limit in the Anthropic console — adding credit alone will not clear it. ${raw.slice(0, 120)}`;
         } else if (status === 429) {
           message = 'Rate limited at the moment — a short pause should clear it.';
         } else if (status === 529 || status === 500) {
