@@ -680,7 +680,20 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
               setProgress(`Cataloging ${label}…${foundNote}`);
             },
           });
-          parts.push(parseScanResult(full || acc));
+          const got = parseScanResult(full || acc);
+          parts.push(got);
+          // A reply that had to be repaired was cut off mid-catalog, and the
+          // salvage path is good enough that it looks like a clean success —
+          // which is how evidence goes missing with nothing on screen saying
+          // so. Keep what came back (merge deduplicates, so nothing is counted
+          // twice) and leave the part marked unfinished so it is split and
+          // re-read, which is the only thing that recovers the cut-off tail.
+          //
+          // Deliberately NOT a retry: a part that was too long to finish is
+          // too long every time, so three attempts would buy three identical
+          // truncations and bill for all of them. Break straight out to the
+          // split path.
+          if (got.truncated) break;
           ok = true;
         } catch (e: any) {
           noteError(e);

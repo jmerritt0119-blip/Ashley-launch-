@@ -137,13 +137,22 @@ export default async (req) => {
           // and the function runtime Netlify charges for.
           const params = {
             model,
-            // A ceiling, not a target: raising it costs nothing unless a part
-            // actually has that much to say. A scan part now carries three
-            // times the conversation it used to and is asked for up to ~150
-            // flagged messages, so 16,000 had become a real risk of cutting a
-            // catalog off mid-list — and it would be the densest parts, the
-            // worst weeks, that hit it.
-            max_tokens: 32000,
+            // Chat and scan do NOT get the same ceiling, and conflating them
+            // is what produced 504s on her first real run of the day.
+            //
+            // Raising a ceiling is only free if nothing is timed. This function
+            // is timed: the platform kills it at a fixed wall-clock limit, and
+            // #52 established on her own archive that what decides whether a
+            // part survives is how much JSON it has to write. A generous
+            // ceiling on a dense part is therefore not headroom, it is rope —
+            // and the parts dense enough to use it are her worst weeks, the
+            // evidence that matters most.
+            //
+            // Chat keeps 32,000: one answer, and a custody question spends most
+            // of its budget thinking. Scan gets 10,000, below the 16,000 that
+            // was surviving on Sonnet, because Opus writes the same catalog
+            // more slowly and the limit is wall-clock, not tokens.
+            max_tokens: isChat ? 32000 : 10000,
             system,
             messages: convo,
             ...(isChat ? { thinking: { type: 'adaptive' } } : {}),

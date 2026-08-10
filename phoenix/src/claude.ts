@@ -348,9 +348,20 @@ async function viaDirect(opts: AdvocateOpts): Promise<string> {
   const isScan = opts.mode === "scan";
   const params: any = {
     model: opts.model,
-    // Same ceiling either way, and the same as the server uses — a scan part
-    // can produce a long catalog and must not be cut off mid-list.
-    max_tokens: 32000,
+    // NOT the same ceiling for both, and the difference is the whole reason a
+    // scan finishes.
+    //
+    // Chat is one answer to one question and can afford to run long. A scan
+    // part is billed against a serverless function that is killed at a fixed
+    // wall-clock limit, and what governs whether a part survives is how much
+    // JSON it has to write — proven on her own archive in #52. Opus writes
+    // slower than Sonnet, so the ceiling has to sit lower here than it did
+    // when Sonnet was doing this job, not higher.
+    //
+    // 10,000 is a ceiling, not a target. A part that needs more than this is a
+    // part that should have been smaller, and it is now split and re-read
+    // rather than silently truncated.
+    max_tokens: isScan ? 10000 : 32000,
     system,
     messages: opts.history.map((t) => ({ role: t.role, content: t.content })),
     // Deep Scan is set up exactly as the server sets it up, so a scan run on

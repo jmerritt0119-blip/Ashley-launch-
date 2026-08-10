@@ -102,31 +102,40 @@ export interface ScanResult {
 /**
  * How much of her archive goes into one Deep Scan request.
  *
- * Back to 60,000 — what the first scan used, the one that found her cases and
- * ranked them.
+ * 16,000 — set by what a part has to WRITE, not by what it can read.
  *
- * It went 60,000 → 30,000 → 8,000 → 20,000, each cut made to stop parts dying
- * mid-stream, and each one narrowed what the model can see at once. That is
- * not a neutral trade. Abuse is a pattern, and a pattern is only visible in a
- * window wide enough to hold it: the message in March that explains the one in
- * June, the apology that follows an argument three days later, the same threat
- * escalating over a month. At 20,000 characters the model reads a few hundred
- * messages in isolation and answers well about each of them. At 60,000 it reads
- * the conversation.
+ * I raised this to 60,000 this morning to give the model back the wide window
+ * the first good scan had, and argued that the reasons it had been cut were
+ * answered. They were not, and her next real scan came back 504 — the
+ * function killed by the platform before the JSON arrived.
  *
- * The two reasons it was cut have both been answered since. Output headroom
- * doubled (max_tokens 8,000 → 16,000), so a dense part has room to write its
- * catalog — that was the original truncation problem. And a part that still
- * cannot finish is now cut in half and retried automatically, so the failure
- * mode this constant was protecting against is handled where it happens
- * instead of by making every part small forever.
+ * #52 had already measured this on her own archive and written it down: what
+ * decides whether a part survives is the length of the catalog it has to
+ * produce. A sparse stretch finishes easily; a dense one generates for long
+ * enough to be killed. Dense, in her archive, means the worst weeks — so the
+ * scan fails hardest on exactly the evidence that matters most, and retrying
+ * never helps, because the same part takes the same time every attempt.
  *
- * It is also cheaper. The instructions in front of the document are ~4,400
- * tokens and are re-sent with every single part; tripling the part size cuts
- * her archive from about 47 parts to about 16, which removes two thirds of
- * that repetition along with two thirds of the requests that can fail.
+ * I then made it worse in four directions at once: this window tripled, the
+ * token ceiling doubled to 32,000, the prompt asked for ~150 flagged messages
+ * instead of ~60, and the model went back to Opus, which writes the same
+ * catalog more slowly than the Sonnet those numbers were last surviving on.
+ * Any one of those lengthens a part. Together they guarantee the failure.
+ *
+ * So the window is set from the output budget and nothing else. 16,000
+ * characters is a few hundred messages, and ~30 flagged messages out of a few
+ * hundred is a cap that almost never binds — which matters more than width,
+ * because a cap that binds drops evidence silently and a narrow window only
+ * costs context. It sits comfortably above the 8,000 that was proven safe for
+ * Opus and well under what just died.
+ *
+ * The context this gives up is real and I am not pretending otherwise: a
+ * pattern spanning months is easier to see in one wide read. That is what the
+ * whole-case synthesis pass is for — it runs across the merged findings from
+ * every part, so the long arc is assembled where there is no execution limit
+ * to hit, instead of being paid for in parts that never come back.
  */
-export const SCAN_CHUNK_SIZE = 60_000;
+export const SCAN_CHUNK_SIZE = 16_000;
 
 /**
  * The model every deep scan runs on, regardless of the chat model picker.
@@ -191,9 +200,10 @@ export const SCANNER_NOTES: Record<number, string> = {
  */
 export function estimateScanTime(chars: number) {
   const parts = Math.max(1, Math.ceil(chars / SCAN_CHUNK_SIZE));
-  // Four parts at a time; a part takes roughly half a minute to a minute and a half.
-  const minsLow = Math.max(1, Math.round((parts / 4) * 0.6));
-  const minsHigh = Math.max(2, Math.round((parts / 4) * 1.5));
+  // Four parts at a time. Parts are smaller than they were, so each one lands
+  // faster — roughly twenty to fifty seconds — but there are more of them.
+  const minsLow = Math.max(1, Math.round((parts / 4) * 0.35));
+  const minsHigh = Math.max(2, Math.round((parts / 4) * 0.85));
   return { parts, minsLow, minsHigh };
 }
 
@@ -608,7 +618,7 @@ Rules:
   finding you passed over, because she will never learn it was there — nobody
   reads these messages again. Err toward including a borderline item, tagged
   honestly, rather than leaving it out. If this part holds an overwhelming
-  number of similar quotes, keep the ~150 most legally significant
+  number of similar quotes, keep the ~30 most legally significant
   flaggedMessages (favour threats, violence, admissions, sexual content,
   anything involving the child, and her own expressions of fear) and say in
   "summary" how many more of the same pattern exist.
