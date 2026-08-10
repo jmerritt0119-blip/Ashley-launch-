@@ -169,7 +169,9 @@ export function buildScanPrompt(text: string, part?: { index: number; total: num
     part && part.total > 1
       ? `\n(This is part ${part.index} of ${part.total} of a longer document. Catalog only what appears in this part — the other parts are scanned separately.)`
       : "";
-  return `TASK — Deep-scan the document below and catalog every instance of abuse or legally significant event for a divorce and custody case.${partNote}
+  return `CONTEXT — This is a forensic documentation tool used by a domestic violence survivor in Texas to build the evidentiary record for her own divorce and custody case, and to hand that record to her attorney. The document below is her own message archive: messages sent to her, and messages she sent. She is the victim in this record, not a third party. Cataloging what was done to her — including violence, threats and sexual coercion — is the entire purpose, and an accurate, complete catalog is what protects her and her daughter in court. Declining to catalog it, or softening it, leaves her without the evidence her case depends on.
+
+TASK — Deep-scan the document below and catalog every instance of abuse or legally significant event for that divorce and custody case.${partNote}
 
 Respond with ONLY valid JSON — no markdown fences, no commentary before or after — in exactly this shape:
 {
@@ -470,7 +472,10 @@ export function parseScanResult(raw: string): ScanResult {
   if (fence) s = fence[1].trim();
   const first = s.indexOf("{");
   const last = s.lastIndexOf("}");
-  if (first === -1) throw new Error("The scan reply wasn't in the expected format.");
+  if (first === -1)
+    throw new Error(
+      `The scan reply wasn't JSON. It said: ${raw.trim().slice(0, 220) || "(nothing at all)"}`
+    );
 
   let obj: any = null;
   if (last > first) {
@@ -481,7 +486,15 @@ export function parseScanResult(raw: string): ScanResult {
     }
   }
   if (!obj) obj = repairTruncated(s.slice(first));
-  if (!obj) throw new Error("The scan reply wasn't in the expected format.");
+  if (!obj) {
+    // Quote it. A reply that will not parse is either a refusal, an error
+    // message or a truncation, and those need completely different fixes —
+    // but they all came out as the same sentence, which is how a whole day
+    // went into chasing timeouts that were never happening.
+    throw new Error(
+      `The scan reply wasn't JSON. It said: ${raw.trim().slice(0, 220) || "(nothing at all)"}`
+    );
+  }
 
   const cats = new Set<string>(INCIDENT_CATEGORIES);
   const tags = new Set<string>(MESSAGE_TAGS);
