@@ -377,6 +377,11 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     const abort = new AbortController();
     abortRef.current = abort;
     const failed: number[] = [];
+    // The actual reason the first part died. Every failure used to be labelled
+    // "a connection error" whatever it was — an API rejection, a truncated
+    // reply, a parse failure — which sent hours of debugging in the wrong
+    // direction. Whatever it really is, she and I both get to see it.
+    let firstError = "";
     const parts = partsRef.current;
 
     // A hundred and twenty-five parts is a long time to stare at a screen with
@@ -467,7 +472,8 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
           });
           parts.push(parseScanResult(full || acc));
           ok = true;
-        } catch {
+        } catch (e: any) {
+          if (!firstError) firstError = String(e?.message || e || "unknown");
           if (abort.signal.aborted) break;
           // Before paying for another attempt, check whether the one that just
           // failed already came back with a usable catalog. A part cut off near
@@ -559,9 +565,11 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
       setError(
         `${failed.length} of ${chunks.length} part${failed.length === 1 ? "" : "s"} (${failed
           .map((i) => i + 1)
-          .join(", ")}) hit a connection error and ${
+          .slice(0, 20)
+          .join(", ")}${failed.length > 20 ? "…" : ""}) could not be read and ${
           failed.length === 1 ? "was" : "were"
-        } skipped — everything else is cataloged below. Tap "Scan remaining parts" to finish.`
+        } skipped — everything else is cataloged below. Tap "Scan remaining parts" to finish.` +
+          (firstError ? `\n\nWhat went wrong: ${firstError}` : "")
       );
     }
     setBusy(false);

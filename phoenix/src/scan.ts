@@ -105,7 +105,7 @@ export interface ScanResult {
  * but each one completes, each one is saved the moment it does, and a scan that
  * takes longer and finishes beats a fast one that dies on the evidence.
  */
-export const SCAN_CHUNK_SIZE = 8_000;
+export const SCAN_CHUNK_SIZE = 20_000;
 
 /** The model every deep scan runs on, regardless of the chat model picker. */
 /**

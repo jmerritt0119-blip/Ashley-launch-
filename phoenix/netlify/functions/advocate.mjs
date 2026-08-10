@@ -137,11 +137,17 @@ export default async (req) => {
           // and the function runtime Netlify charges for.
           const params = {
             model,
-            max_tokens: isChat ? 32000 : 6000,
+            max_tokens: isChat ? 32000 : 16000,
             system,
             messages: convo,
             ...(isChat ? { thinking: { type: 'adaptive' } } : {}),
-            output_config: { effort: isChat ? 'xhigh' : 'medium' },
+            // effort is set only for chat. Combining it with thinking disabled
+            // is the one parameter combination in this request that was never
+            // exercised before every single part of a 473-part scan failed, and
+            // an unfamiliar combination is the first thing to remove when the
+            // failure rate is 100% — that pattern is a rejected request, not a
+            // timeout, because a timeout spares the sparse parts.
+            ...(isChat ? { output_config: { effort: 'xhigh' } } : {}),
             ...(TOOLS ? { tools: TOOLS } : {}),
           };
           let run;
