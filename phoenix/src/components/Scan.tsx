@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useLiveQuery } from "dexie-react-hooks";
 import { addMessagesDeduped, db } from "../db";
 import { streamAdvocate } from "../claude";
 import { handoff } from "../handoff";
@@ -121,6 +122,8 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
   const [archived, setArchived] = useState<number>(0);
   const [dupNote, setDupNote] = useState<string | null>(null);
   const [senders, setSenders] = useState<{ name: string; count: number }[]>([]);
+  /** How many messages she already has, so the re-scan button knows to appear. */
+  const archivedCount = useLiveQuery(() => db.messages.count(), [], 0);
   const docRef = useRef<string>("");
   const fileRef = useRef<HTMLInputElement>(null);
   const shotRef = useRef<HTMLInputElement>(null);
@@ -599,6 +602,44 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
 
   const stop = () => abortRef.current?.abort();
 
+  /**
+   * Re-read everything already in her archive, with no file involved.
+   *
+   * The only way to start a scan was to have text in the box — and a large
+   * export is deliberately kept OUT of the box to stay fast, which left the
+   * Scan button greyed out and no obvious way to run it again. The honest
+   * description of that is: after her biggest upload, the app had no visible
+   * restart. She was re-uploading a 3.7 MB file to get back to where she
+   * already was.
+   *
+   * Her messages are in the database from the moment the file was read, so the
+   * archive is all that is needed. One button, always available once she has
+   * messages, no file, no hunting.
+   */
+  const rescanArchive = async () => {
+    setError(null);
+    setProgress("Reading your archive…");
+    try {
+      const rows = await db.messages.orderBy("date").toArray();
+      const doc = rows
+        .filter((m) => (m.text || "").trim())
+        .map((m) => `${m.date}${m.time ? " " + m.time : ""} ${m.sender}: ${m.text.trim()}`)
+        .join("\n");
+      if (!doc) {
+        setProgress("");
+        setError("There are no messages in your archive yet to scan.");
+        return;
+      }
+      setLoadedNote(
+        `Reading ${rows.length.toLocaleString()} messages straight from your archive — nothing to upload.`
+      );
+      await run(false, doc);
+    } catch (e: any) {
+      setProgress("");
+      setError("Couldn't read your archive: " + (e?.message || "unknown error"));
+    }
+  };
+
   const toggle = (set: Set<number>, i: number, save: (s: Set<number>) => void) => {
     const next = new Set(set);
     if (next.has(i)) next.delete(i);
@@ -772,6 +813,11 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
           {!busy && remaining.length > 0 && (
             <button className="btn secondary" onClick={() => void run(true)}>
               Scan remaining parts ({remaining.length})
+            </button>
+          )}
+          {!busy && archivedCount > 0 && (
+            <button className="btn" onClick={() => void rescanArchive()}>
+              Scan everything in my archive again
             </button>
           )}
           <button className="btn ghost" disabled={busy} onClick={() => fileRef.current?.click()}>
