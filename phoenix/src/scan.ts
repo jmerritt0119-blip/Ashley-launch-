@@ -1,6 +1,9 @@
 // Deep Scan: dump a whole document (message export, journal, report) and have
 // the AI find and catalog every abuse instance as structured entries.
-import { INCIDENT_CATEGORIES, MESSAGE_TAGS } from "./db";
+// Straight from taxonomy.ts rather than through db.ts: building a scan prompt
+// must not require a database connection, so the prompt can be exercised from
+// a terminal instead of only inside a browser.
+import { INCIDENT_CATEGORIES, MESSAGE_TAGS } from "./taxonomy";
 import { normalizeDate } from "./parseMessages";
 
 export interface ScanIncident {

@@ -1,30 +1,9 @@
 import Dexie, { type Table } from "dexie";
 
-export const INCIDENT_CATEGORIES = [
-  "physical",
-  "verbal / emotional",
-  "coercive control",
-  "financial abuse",
-  "threats / intimidation",
-  "stalking / monitoring",
-  "sexual abuse",
-  "property damage",
-  "children / custody",
-  "digital abuse",
-  "legal / litigation abuse",
-  "isolation",
-] as const;
-
-export const MESSAGE_TAGS = [
-  "threat",
-  "control",
-  "financial",
-  "custody / children",
-  "harassment",
-  "admission",
-  "apology-cycle",
-  "monitoring",
-] as const;
+// Defined in taxonomy.ts and re-exported here, so that building a scan prompt
+// does not require opening a database. Every existing `from "./db"` import of
+// these two keeps working exactly as before.
+export { INCIDENT_CATEGORIES, MESSAGE_TAGS } from "./taxonomy";
 
 export interface Incident {
   id?: number;
