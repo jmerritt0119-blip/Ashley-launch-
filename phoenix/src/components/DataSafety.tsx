@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { db, findDuplicateMessages } from "../db";
+import { db, findDuplicateMessages, findTimestampOnlyMessages } from "../db";
 import { dismissRepairNotice, lastRepair, onRepairProgress, type RepairReport } from "../autoRepair";
 import {
   canPromptInstall,
@@ -36,6 +36,7 @@ export default function DataSafety({ compact = false }: { compact?: boolean }) {
   const [note, setNote] = useState<string | null>(null);
   const [showIos, setShowIos] = useState(false);
   const [dups, setDups] = useState<{ groups: number; removable: number[] } | null>(null);
+  const [stamps, setStamps] = useState<{ ids: number[]; total: number } | null>(null);
   const [repair, setRepair] = useState<RepairReport | null>(null);
 
   const scanForDuplicates = async () => {
@@ -47,6 +48,52 @@ export default function DataSafety({ compact = false }: { compact?: boolean }) {
         ? "No duplicates — every message in your archive is there once."
         : `Found ${found.removable.length.toLocaleString()} duplicate copies across ${found.groups.toLocaleString()} messages. Nothing has been removed; the button below does that.`
     );
+    setBusy("");
+  };
+
+  /**
+   * Finds messages that imported with a timestamp instead of their words.
+   *
+   * Worth its own button because scanning them is the most expensive possible
+   * way to learn nothing: a full run over an archive of dates costs the same as
+   * a real one and returns an empty catalog, which reads as "there is nothing
+   * in your messages."
+   */
+  const checkForTimestampRows = async () => {
+    setBusy("stamps");
+    const found = await findTimestampOnlyMessages();
+    setStamps(found);
+    setNote(
+      found.ids.length === 0
+        ? "Every message in your archive has real words in it. Nothing to clean up."
+        : `${found.ids.length.toLocaleString()} of your ${found.total.toLocaleString()} saved messages came in with only a date where the words should be — an import fault, now fixed. They cannot be scanned and nothing can be found in them. Nothing has been removed; the button below does that.`
+    );
+    setBusy("");
+  };
+
+  const removeTimestampRows = async () => {
+    if (!stamps?.ids.length) return;
+    if (
+      !confirm(
+        `Remove ${stamps.ids.length.toLocaleString()} messages that saved with only a date?\n\n` +
+          "These hold no words — nothing you or anyone else wrote. They came from a fault in " +
+          "reading the export file, which is now fixed.\n\n" +
+          "Remove them, then add your export again and it will come in properly.\n\n" +
+          "A restore point is saved first, so this is reversible."
+      )
+    )
+      return;
+    setBusy("stamps");
+    await takeSnapshot("before removing messages that imported as dates");
+    const CHUNK = 2000;
+    for (let i = 0; i < stamps.ids.length; i += CHUNK) {
+      await db.messages.bulkDelete(stamps.ids.slice(i, i + CHUNK));
+    }
+    setNote(
+      `Removed ${stamps.ids.length.toLocaleString()} empty messages. Add your export again — it will import with the actual messages this time, and every message will be marked with who sent it.`
+    );
+    setStamps(null);
+    await refresh();
     setBusy("");
   };
 
@@ -227,6 +274,18 @@ export default function DataSafety({ compact = false }: { compact?: boolean }) {
         {!!dups?.removable.length && (
           <button className="btn" onClick={() => void removeDuplicates()} disabled={busy === "dups"}>
             Remove {dups.removable.length.toLocaleString()} duplicates
+          </button>
+        )}
+        <button
+          className="btn secondary"
+          onClick={() => void checkForTimestampRows()}
+          disabled={busy === "stamps"}
+        >
+          {busy === "stamps" ? "Checking…" : "Check my messages have their words"}
+        </button>
+        {!!stamps?.ids.length && (
+          <button className="btn" onClick={() => void removeTimestampRows()} disabled={busy === "stamps"}>
+            Remove {stamps.ids.length.toLocaleString()} empty messages
           </button>
         )}
       </div>

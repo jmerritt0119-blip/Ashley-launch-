@@ -423,6 +423,50 @@ export async function addMessagesDeduped(
  * removed, always keeping the copy that carries her work: a starred or tagged
  * duplicate is kept over a bare one, and the oldest is kept otherwise.
  */
+/**
+ * Messages that imported with a timestamp where their words should be.
+ *
+ * A phone export's second column is "Message Date", and the old column-matching
+ * took the first header containing "message" — so every row imported with the
+ * date as its body. On a real 24,928-message export that produced an archive
+ * containing not one word anyone had written, which is why Deep Scan kept
+ * reporting that it found nothing.
+ *
+ * The import is fixed, but rows already saved that way are still on her device
+ * and no scan will ever get anything out of them. This finds exactly those:
+ * a message whose entire text is a date, a time, or a date and time, and
+ * nothing else. Anything with real words in it — even a short one, even one
+ * that merely mentions a date — is left alone.
+ *
+ * Deliberately narrow. It would be easy to write something that cleared more
+ * and it is not worth the risk: this is the evidence for her custody case, and
+ * a false positive here deletes something no one can get back.
+ */
+const TIMESTAMP_ONLY =
+  /^\s*(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})?\s*(?:[T,]?\s*\d{1,2}:\d{2}(?::\d{2})?\s*(?:[AP]\.?M\.?)?)?\s*(?:[+-]\d{2}:?\d{2}|Z|UTC|GMT)?\s*$/i;
+
+export function isTimestampOnly(text: string): boolean {
+  const t = (text || "").trim();
+  // An empty string is not this bug, and a long string never is.
+  if (!t || t.length > 40) return false;
+  // Must actually contain a digit run that looks like a date or a clock.
+  if (!/\d{1,4}[:/.-]\d{1,2}/.test(t)) return false;
+  return TIMESTAMP_ONLY.test(t);
+}
+
+/** Ids of messages whose text is only a timestamp, plus the total scanned. */
+export async function findTimestampOnlyMessages(): Promise<{
+  ids: number[];
+  total: number;
+}> {
+  const rows = await db.messages.toArray();
+  const ids: number[] = [];
+  for (const m of rows) {
+    if (isTimestampOnly(m.text || "")) ids.push(m.id as number);
+  }
+  return { ids, total: rows.length };
+}
+
 export async function findDuplicateMessages(): Promise<{
   groups: number;
   removable: number[];
