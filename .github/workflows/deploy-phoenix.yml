@@ -201,10 +201,28 @@ jobs:
         with:
           node-version: 20
 
-      - name: Check required secret
+      # Fail here, in seconds, with the actual remedy — rather than three
+      # minutes later on "Could not find or create the Netlify site", which is
+      # what a rejected token looks like from the far end of the CLI.
+      #
+      # The stored token is present but Unauthorized, so checking that the
+      # secret merely EXISTS proved nothing: the run sailed past this step and
+      # died somewhere that named neither the cause nor the fix. Anyone hitting
+      # "Run workflow" from the Actions tab without pasting a proxy path lands
+      # here, sees red, and reasonably concludes the app is broken. It is not —
+      # only this path is.
+      - name: Check the Netlify token actually works
         run: |
           if [ -z "$NETLIFY_AUTH_TOKEN" ]; then
-            echo "::error::NETLIFY_AUTH_TOKEN secret is not set. Add it under Settings -> Secrets and variables -> Actions."
+            echo "::error::NETLIFY_AUTH_TOKEN is not set. Either paste a proxy path into the netlify_proxy_path input when starting this workflow, or add the secret under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          code=$(curl -s -o /dev/null -w '%{http_code}' -m 20 \
+            -H "Authorization: Bearer $NETLIFY_AUTH_TOKEN" \
+            "https://api.netlify.com/api/v1/sites/$SITE_ID" || echo "000")
+          echo "Netlify API answered HTTP $code"
+          if [ "$code" = "401" ] || [ "$code" = "403" ]; then
+            echo "::error::The stored NETLIFY_AUTH_TOKEN is rejected by Netlify (HTTP $code), so this path cannot deploy. Nothing is wrong with the app or this commit. Two ways forward: (1) start this workflow again and paste a Netlify MCP proxy deploy URL into the netlify_proxy_path input — that path needs no token and is how every recent deploy has run; or (2) mint a new token at Netlify -> User settings -> Applications -> New access token and update the NETLIFY_AUTH_TOKEN secret."
             exit 1
           fi
 
