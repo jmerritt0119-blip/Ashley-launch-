@@ -122,11 +122,36 @@ export default async (req) => {
   // indistinguishable from one that ended — which is exactly how she was shown
   // "Good. Now here is the answer." and then nothing at all.
   const DONE = '\u0004';
+  // Keeps the response alive while the model is still reading.
+  //
+  // The platform needs to see a response START soon after the request
+  // arrives. A scan part carries ~8,000 tokens of instructions plus her
+  // messages, and Opus spends long enough reading that before it emits its
+  // first character that the gateway gives up — a 504, which is the failure
+  // that has driven part sizes down from 60,000 characters to 16,000 today
+  // without ever fixing the cause.
+  //
+  // One byte, sent the instant the stream opens and repeated every few
+  // seconds until real text arrives, means the response is already in
+  // progress and the model can take as long as it needs. The client strips
+  // these before anything — above all the JSON parser — sees them.
+  const BEAT = '\u0006';
 
   const stream = new ReadableStream({
     async start(controller) {
       let emitted = false;
       let searching = false;
+      // Immediately, before a single token has been read.
+      controller.enqueue(encoder.encode(BEAT));
+      const beat = setInterval(() => {
+        if (emitted) return;
+        try {
+          controller.enqueue(encoder.encode(BEAT));
+        } catch {
+          /* stream already closed */
+        }
+      }, 3000);
+      const stopBeat = () => clearInterval(beat);
 
       const runOnce = (withFallbacks, convo) =>
         new Promise((resolve, reject) => {
@@ -247,9 +272,11 @@ export default async (req) => {
         if (isChat && (finalMsg?.stop_reason === 'max_tokens' || finalMsg?.stop_reason === 'pause_turn')) {
           controller.enqueue(encoder.encode('\n\n' + CUT_SHORT));
         }
+        stopBeat();
         controller.enqueue(encoder.encode(DONE));
         controller.close();
       } catch (err) {
+        stopBeat();
         const status = err?.status;
         const raw = (err?.error?.error?.message || err?.error?.message || err?.message || '').toString();
         const low = raw.toLowerCase();

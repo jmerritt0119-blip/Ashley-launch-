@@ -64,6 +64,13 @@ export const QUICK_ACTIONS: { label: string; prompt: string }[] = [
  * to be invisible.
  */
 const DONE_MARK = "\u0004";
+/**
+ * Sent by the server while the model is still thinking, so the platform sees a
+ * response already in progress and does not time the request out before the
+ * first real character arrives. Stripped in the read loop below; nothing
+ * downstream — least of all the JSON parser — ever sees it.
+ */
+const BEAT_MARK = "\u0006";
 
 const trunc = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "…" : s);
 
@@ -296,6 +303,19 @@ async function viaServer(opts: AdvocateOpts): Promise<string> {
     const { done, value } = await reader.read();
     if (done) break;
     let text = decoder.decode(value, { stream: true });
+    if (!text) continue;
+    // Heartbeat bytes are stripped before anything else sees them.
+    //
+    // The server sends one the instant a request starts, and keeps sending
+    // them while the model is still thinking, purely so the platform sees a
+    // response in progress. Without that, a scan part spends so long reading
+    // 8,000 tokens of instructions plus her messages before it emits its first
+    // character that the gateway gives up and returns 504 — which is the
+    // failure that has been shrinking part sizes all day.
+    //
+    // They must never reach the caller: a scan reply is parsed as JSON, and a
+    // stray control character in the middle of it is a parse error.
+    if (text.includes(BEAT_MARK)) text = text.split(BEAT_MARK).join("");
     if (!text) continue;
     // The server marks a deliberate ending with a single control character.
     // Its absence means the connection died mid-answer.
