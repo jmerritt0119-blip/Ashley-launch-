@@ -735,14 +735,29 @@ Rules:
   "Be conservative" means do not inflate a 3 into a 5. It does NOT mean avoiding
   5 — a 5 that is recorded as a 3 buries the evidence that decides a protective
   order, and those are the entries her attorney and the court need first.
-- Completeness is the whole job. The failure that costs her the case is a
-  finding you passed over, because she will never learn it was there — nobody
-  reads these messages again. Err toward including a borderline item, tagged
-  honestly, rather than leaving it out. If this part holds an overwhelming
-  number of similar quotes, keep the ~12 most legally significant
-  flaggedMessages (favour threats, violence, admissions, sexual content,
-  anything involving the child, and her own expressions of fear) and say in
-  "summary" how many more of the same pattern exist.
+- WHAT COUNTS AS AN INCIDENT. An incident is a discrete event, on a specific
+  date, that a court would recognise as mattering: violence or a threat of it,
+  sexual coercion, a threat about the child, destruction of property, stalking
+  or surveillance, financial control, an act of isolation, or a clear episode of
+  degradation. It needs a date — an undated "ongoing pattern" is not an incident
+  and belongs in "summary" or as an impliedFinding.
+  Do NOT open an incident for ordinary domestic friction: chores, errands, pets,
+  scheduling, money disagreements between equals, a curt reply, a bad mood, one
+  person being annoyed with the other. Couples who are not abusive produce
+  thousands of those, and every one filed here buries the entries that decide
+  her case. If something reads as controlling but is minor on its own, it is an
+  impliedFinding or a flaggedMessage showing a pattern — not an incident.
+  A catalog of 2,000 entries is worth less to her attorney than a catalog of 60,
+  because nobody reads 2,000 and the eleven that matter are lost inside it.
+- Completeness still matters, in the right place. The failure that costs her the
+  case is a finding nobody ever sees, because these messages are not read again.
+  So be generous with flaggedMessages and impliedFindings, where an extra entry
+  costs nothing, and be selective with incidents, where an extra entry costs
+  attention. If this part holds an overwhelming number of similar quotes, keep
+  the ~12 most legally significant flaggedMessages (favour threats, violence,
+  admissions, sexual content, anything involving the child, and her own
+  expressions of fear) and say in "summary" how many more of the same pattern
+  exist.
 - Before you finish, check the list once: did you look for strangulation, for a
   weapon, for forced sex, for violence in pregnancy, for threats to the child,
   for surveillance, for money control, for isolation, and for her own fear? If
