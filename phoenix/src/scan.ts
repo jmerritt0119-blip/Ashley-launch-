@@ -110,19 +110,35 @@ export interface ScanResult {
  */
 export const SCAN_CHUNK_SIZE = 20_000;
 
-/** The model every deep scan runs on, regardless of the chat model picker. */
 /**
- * Deep Scan reads messages and returns JSON. It is extraction, not legal
- * reasoning — the Advocate keeps Opus for that, where it matters.
+ * The model every deep scan runs on, regardless of the chat model picker.
  *
- * Opus at high effort held a serverless function open for a minute or more per
- * part, and a scan is over a hundred parts back to back. Netlify bills the
- * whole time a function is alive, so the thinking time was being paid for
- * twice: once to Anthropic in tokens, once to Netlify in runtime. Sonnet does
- * this job for roughly a third of the token cost and a fraction of the wall
- * clock, which is the number that actually blocked her site.
+ * Back on Opus, where it started and where it belongs.
+ *
+ * It was moved to Sonnet to make Deep Scan cheaper (#46) — the reasoning being
+ * that cataloging is extraction rather than legal reasoning, so a smaller model
+ * would do. That reasoning was wrong about this job, and the change was made
+ * for cost rather than for results. The commit that made it said so plainly and
+ * left the way back: "Reversible in two lines if the catalog quality is not
+ * good enough."
+ *
+ * It is not good enough. The first scan she ever ran was on Opus: it found her
+ * cases, it ranked them, and she described it as remarkable. Nothing since has
+ * matched that, and the model is what changed.
+ *
+ * Reading her archive is not extraction. Almost none of the worst of it is
+ * written down plainly — it sits in what two people who both already know what
+ * happened refer to without naming, and telling that apart from an ordinary bad
+ * week is a judgement call on every message. That is reasoning, and it is the
+ * single most consequential judgement this app makes, because what it misses
+ * she never learns was there.
+ *
+ * The cost argument was real but it was not about tokens: Opus held a
+ * serverless function open longer, and Netlify bills for that. That is a
+ * reason to make parts smaller or to run fewer of them. It is not a reason to
+ * send a weaker reader at the evidence her custody case depends on.
  */
-export const SCAN_MODEL = "claude-sonnet-5";
+export const SCAN_MODEL = "claude-opus-5";
 
 /**
  * Bumped whenever the scanner gets materially better — a wider taxonomy, a

@@ -345,15 +345,22 @@ async function viaDirect(opts: AdvocateOpts): Promise<string> {
     });
   }
 
+  const isScan = opts.mode === "scan";
   const params: any = {
     model: opts.model,
-    // Per mode, for the same reason as the server: Deep Scan runs many parts
-    // in sequence and only finishes at "high". xhigh killed a 63-part scan.
-    max_tokens: opts.mode === "scan" ? 24000 : 32000,
+    max_tokens: isScan ? 24000 : 32000,
     system,
     messages: opts.history.map((t) => ({ role: t.role, content: t.content })),
-    thinking: { type: "adaptive" },
-    output_config: { effort: opts.mode === "scan" ? "medium" : "xhigh" },
+    // Deep Scan is set up exactly as the server sets it up, so a scan run on
+    // her own API key catalogs the same way as one run through the site.
+    //
+    // It used to differ on both counts here: extended thinking stayed on, and
+    // effort was pinned down to "medium" as part of the change that also moved
+    // scans off Opus for cost. Thinking off is what makes each part start
+    // streaming immediately and finish inside the platform's limit; leaving the
+    // effort unpinned lets the model bring its full weight to the judgement
+    // calls, which on this document is the whole job.
+    ...(isScan ? {} : { thinking: { type: "adaptive" }, output_config: { effort: "xhigh" } }),
     ...(opts.webSearch === true
       ? { tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 8 }] }
       : {}),

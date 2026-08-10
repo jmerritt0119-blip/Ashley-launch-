@@ -1111,7 +1111,7 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
           </div>
         )}
         <p className="muted small" style={{ marginTop: 8 }}>
-          Deep scans always run on Claude Sonnet 5, whatever the chat is set to. A very large
+          Deep scans always run on Claude Opus 5, whatever the chat is set to. A very large
           export takes a while — you can leave this page or close the app; everything found is
           saved as it goes, and results appear below as each part completes.
         </p>
