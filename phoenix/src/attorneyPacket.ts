@@ -352,15 +352,42 @@ export async function buildCaseIndexHtml(name: string, county: string): Promise<
   ]);
   const s = await packetStats();
 
-  type Item = { date: string; time: string; kind: string; ref: string; title: string; body: string; meta: string };
+  /**
+   * How serious an entry is, on one scale, so counsel can sort to the worst.
+   *
+   * Only an incident carries a rating she gave it herself, and only those show
+   * stars. Everything else still has to take a position in a "most serious
+   * first" list, so it gets one by rule — stated on the page rather than
+   * implied, because an unexplained number on a document going to a lawyer is
+   * worse than no number at all.
+   */
+  const TAG_RANK: Record<string, number> = {
+    threat: 5,
+    admission: 4,
+    harassment: 4,
+    monitoring: 4,
+    control: 3,
+    "custody / children": 3,
+    financial: 3,
+    "apology-cycle": 2,
+  };
+
+  type Item = {
+    date: string; time: string; kind: string; ref: string; title: string; body: string; meta: string;
+    /** 1-5, used for ordering. */
+    sev: number;
+    /** True only where she rated it herself — those are the only stars drawn. */
+    rated: boolean;
+  };
   const items: Item[] = [];
 
   for (const i of incidents)
     items.push({
       date: i.date, time: i.time || "", kind: "Incident", ref: refInc(i.id), title: i.title,
       body: i.narrative,
+      sev: i.severity, rated: true,
       meta: [
-        `severity ${i.severity}/5`, i.categories.join(", "),
+        i.categories.join(", "),
         i.childrenPresent ? "child present" : "", i.location ? `at ${i.location}` : "",
         i.witnesses ? `witness: ${i.witnesses}` : "",
         i.policeReport ? `police report ${i.policeReport}` : "",
@@ -372,12 +399,19 @@ export async function buildCaseIndexHtml(name: string, county: string): Promise<
     items.push({
       date: (m.date || "").slice(0, 10), time: m.time || "", kind: "Message", ref: refMsg(m.id),
       title: `from ${m.sender}`, body: m.text, meta: (m.tags || []).join(", "),
+      // What it was flagged for is the only signal a message carries. A threat
+      // outranks an apology; taking the highest means a message tagged both is
+      // ranked by its worst element, which is how it would be read in court.
+      sev: (m.tags || []).length ? Math.max(...m.tags.map((t) => TAG_RANK[t] ?? 3)) : 3,
+      rated: false,
     });
 
   for (const j of journal)
     items.push({
       date: j.date, time: j.time || "", kind: "Journal", ref: refJrn(j.id),
       title: j.title || "(entry)", body: j.body,
+      // Her own account: context around the events, not an event itself.
+      sev: 2, rated: false,
       meta: j.contemporaneous ? "written at the time" : "recalled later",
     });
 
@@ -385,6 +419,10 @@ export async function buildCaseIndexHtml(name: string, county: string): Promise<
     items.push({
       date: v.date, time: v.time || "", kind: "Violation", ref: refVio(v.id), title: v.type,
       body: v.description,
+      // A breach of a standing order is independently actionable, so it ranks
+      // with the most serious entries whatever it consisted of. With a child
+      // present it is the top of the scale.
+      sev: v.childPresent ? 5 : 4, rated: false,
       meta: [v.orderName, v.provision, v.childPresent ? "child present" : "", v.reported ? `reported: ${v.reported}` : ""]
         .filter(Boolean).join(" · "),
     });
@@ -392,16 +430,23 @@ export async function buildCaseIndexHtml(name: string, county: string): Promise<
   for (const e of evidence)
     items.push({
       date: e.date, time: "", kind: "Evidence", ref: refEvi(e.id), title: e.title,
-      body: e.notes || "", meta: [e.kind, e.fileName ? `files/${e.fileName}` : "indexed only",
+      body: e.notes || "", sev: 3, rated: false,
+      meta: [e.kind, e.fileName ? `files/${e.fileName}` : "indexed only",
         e.sha256 ? `SHA-256 ${e.sha256.slice(0, 16)}…` : ""].filter(Boolean).join(" · "),
     });
 
   items.sort((a, b) => `${a.date} ${a.time}` < `${b.date} ${b.time}` ? -1 : 1);
 
+  const stars = (n: number) => "★".repeat(n) + "☆".repeat(Math.max(0, 5 - n));
+
   const rows = items
     .map(
-      (i) => `<article class="e ${i.kind.toLowerCase()}" data-k="${esc(i.kind)}">
-  <div class="h"><span class="ref">${esc(i.ref)}</span><time>${esc(i.date)}${i.time ? " " + esc(i.time) : ""}</time><span class="k">${esc(i.kind)}</span></div>
+      (i) => `<article class="e ${i.kind.toLowerCase()}" data-k="${esc(i.kind)}" data-sev="${i.sev}" data-when="${esc(i.date)} ${esc(i.time)}">
+  <div class="h"><span class="ref">${esc(i.ref)}</span><time>${esc(i.date)}${i.time ? " " + esc(i.time) : ""}</time>${
+    i.rated
+      ? `<span class="sev s${i.sev}" title="Severity ${i.sev} of 5 — the client's own rating">${stars(i.sev)}</span>`
+      : ""
+  }<span class="k">${esc(i.kind)}</span></div>
   <h3>${esc(i.title)}</h3>
   ${i.body ? `<p>${esc(i.body)}</p>` : ""}
   ${i.meta ? `<p class="m">${esc(i.meta)}</p>` : ""}
@@ -438,9 +483,12 @@ h1{font-size:1.7rem;margin:0 0 4px}
 .note h2{margin:0 0 8px;font-size:1rem}
 .controls{position:sticky;top:0;background:var(--bg);padding:14px 0;border-bottom:1px solid var(--line);z-index:5}
 input[type=search]{width:100%;padding:11px 14px;font-size:1rem;border:1px solid var(--line);border-radius:8px;background:var(--pan);color:var(--ink)}
-.filters{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.filters{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center}
 .filters button{border:1px solid var(--line);background:var(--pan);color:var(--ink);border-radius:999px;padding:5px 12px;font-size:.82rem;cursor:pointer}
 .filters button[aria-pressed=true]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.filters .lbl{color:var(--mut);font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;margin-right:2px}
+.sev{font-size:.95rem;letter-spacing:1px;color:var(--mut)}
+.sev.s4,.sev.s5{color:var(--dan)}
 .e{background:var(--pan);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:12px 0}
 .e.incident{border-left:3px solid var(--dan)}
 .e.violation{border-left:3px solid #e07b00}
@@ -479,15 +527,28 @@ h2.sec{margin:34px 0 4px;padding-top:20px;border-top:1px solid var(--line);font-
   <p style="margin:0"><strong>Not verified:</strong> authorship, or the truth of any account. Nothing here establishes who sent a message; that comes from the device and from carrier records. The narratives and journal entries are the client's own account, offered as such.</p>
 </div>
 
+<div class="note">
+  <h2>How "most serious first" is ordered</h2>
+  <p style="margin:0 0 8px">Stars appear on incidents only, and are the <strong>client's own severity rating</strong> — 1 to 5, as she recorded it. No rating here is an assessment by this software or by anyone else.</p>
+  <p style="margin:0">Entries with no rating still have to take a place in the list, so they take one by a fixed rule, stated here rather than hidden: an <strong>order violation</strong> ranks 4 of 5, or 5 with a child present, because a breach is independently actionable whatever it consisted of; a <strong>flagged message</strong> ranks by what it was flagged for, taking its worst tag (threat 5; admission, harassment, monitoring 4; control, financial, custody 3; apology-cycle 2); <strong>evidence</strong> 3, since its weight comes from what it shows; a <strong>journal entry</strong> 2, being context rather than an event. Sort by date to read the record as a chronology.</p>
+</div>
+
 <div class="controls">
   <input type="search" id="q" placeholder="Search everything — a name, a word, a date…" autocomplete="off">
   <div class="filters" id="f">
+    <span class="lbl">Show</span>
     <button data-k="" aria-pressed="true">Everything</button>
     <button data-k="Incident" aria-pressed="false">Incidents</button>
     <button data-k="Message" aria-pressed="false">Messages</button>
     <button data-k="Journal" aria-pressed="false">Journal</button>
     <button data-k="Violation" aria-pressed="false">Violations</button>
     <button data-k="Evidence" aria-pressed="false">Evidence</button>
+  </div>
+  <div class="filters" id="o">
+    <span class="lbl">Order</span>
+    <button data-o="sev" aria-pressed="true">Most serious first</button>
+    <button data-o="date" aria-pressed="false">Oldest first</button>
+    <button data-o="-date" aria-pressed="false">Newest first</button>
   </div>
 </div>
 
@@ -508,25 +569,51 @@ ${rows || "<p>(Nothing on record yet.)</p>"}
 (function(){
   var q=document.getElementById('q'),list=document.getElementById('list'),
       cards=[].slice.call(list.getElementsByClassName('e')),
-      count=document.getElementById('count'),kind='';
+      count=document.getElementById('count'),kind='',order='sev';
   var hay=cards.map(function(c){return c.textContent.toLowerCase()});
+  // Captured once, before anything is reordered, so "oldest first" can always
+  // return to the true chronology no matter how many times it has been sorted.
+  var meta=cards.map(function(c,i){
+    return {el:c,i:i,sev:+c.getAttribute('data-sev')||0,when:c.getAttribute('data-when')||''};
+  });
+  function sort(){
+    var m=meta.slice();
+    if(order==='sev'){
+      // Within the same seriousness, most recent first: what is both grave and
+      // current is what a hearing turns on.
+      m.sort(function(a,b){return b.sev-a.sev || (a.when<b.when?1:a.when>b.when?-1:a.i-b.i)});
+    } else if(order==='-date'){
+      m.sort(function(a,b){return a.when<b.when?1:a.when>b.when?-1:b.i-a.i});
+    } else {
+      m.sort(function(a,b){return a.when<b.when?-1:a.when>b.when?1:a.i-b.i});
+    }
+    var frag=document.createDocumentFragment();
+    m.forEach(function(x){frag.appendChild(x.el)});
+    list.appendChild(frag);
+  }
   function run(){
     var t=q.value.trim().toLowerCase(),n=0;
     cards.forEach(function(c,i){
       var show=(!kind||c.getAttribute('data-k')===kind)&&(!t||hay[i].indexOf(t)>-1);
       c.style.display=show?'':'none'; if(show)n++;
     });
-    count.textContent=n+(n===1?' entry':' entries')+(t||kind?' shown':'');
+    count.textContent=n+(n===1?' entry':' entries')+(t||kind?' shown':'')+
+      (order==='sev'?' · most serious first':order==='-date'?' · newest first':' · oldest first');
+  }
+  function press(bar,b){
+    [].forEach.call(bar.getElementsByTagName('button'),function(x){
+      x.setAttribute('aria-pressed',String(x===b));});
   }
   q.addEventListener('input',run);
   document.getElementById('f').addEventListener('click',function(e){
     var b=e.target.closest('button'); if(!b)return;
-    kind=b.getAttribute('data-k');
-    [].forEach.call(this.getElementsByTagName('button'),function(x){
-      x.setAttribute('aria-pressed',String(x===b));});
-    run();
+    kind=b.getAttribute('data-k'); press(this,b); run();
   });
-  run();
+  document.getElementById('o').addEventListener('click',function(e){
+    var b=e.target.closest('button'); if(!b)return;
+    order=b.getAttribute('data-o'); press(this,b); sort(); run();
+  });
+  sort(); run();
 })();
 </script>
 </div></body></html>`;

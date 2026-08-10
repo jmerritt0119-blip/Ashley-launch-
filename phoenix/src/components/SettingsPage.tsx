@@ -42,12 +42,14 @@ Vault code:   ${code}
 Recovery key: ${key}
 
 TO OPEN YOUR CASE ON ANOTHER DEVICE
-Go to https://phoenix-case-builder.netlify.app on that device, open Settings,
-enter the vault code and your passphrase, and tap "Load my case onto this device."
+Go to https://phoenix-case-builder.netlify.app on that device and open Settings.
+Scroll to the line "I'm setting up a new phone or laptop — bring my case onto
+it" and tap it to open that section. Enter the vault code and your passphrase,
+then tap "Bring my case onto this device."
 
 IF YOU FORGET YOUR PASSPHRASE
-Open Settings on any device, enter the vault code, tap "I forgot my passphrase,"
-and enter the recovery key above. It will give your passphrase back to you.
+In that same section, enter the vault code, tap "I forgot the passphrase," and
+enter the recovery key above. It will give your passphrase back to you.
 
 Created ${new Date().toLocaleString()}
 `;
@@ -102,7 +104,7 @@ Created ${new Date().toLocaleString()}
       const pass = await recoverPassphrase(code, recoverInput);
       setVaultPass(pass);
       setVaultMsg(
-        `Recovered. Your passphrase is: ${pass} — it's filled in above, so now tap "Load my case onto this device."`
+        `Recovered. Your passphrase is: ${pass} — it's filled in above, so now tap "Bring my case onto this device."`
       );
     } catch (e: any) {
       setVaultMsg(e?.message || "Couldn't recover with that key.");
