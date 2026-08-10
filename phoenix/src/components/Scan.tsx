@@ -13,6 +13,13 @@ import {
   SCANNER_VERSION,
   type ScanResult,
 } from "../scan";
+import {
+  analysisAsText,
+  buildSynthesisPrompt,
+  lethalityCount,
+  parseCaseAnalysis,
+  type CaseAnalysis,
+} from "../synthesis";
 import { readAnyFiles } from "../readAnyFile";
 import { messagesFromCsv, type ParsedMessage } from "../parseMessages";
 import type { Settings } from "../settings";
@@ -212,6 +219,15 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
    * after twenty minutes and a hundred billed requests.
    */
   const [liveError, setLiveError] = useState<string | null>(null);
+  /**
+   * The whole-case analysis, and whether it is running.
+   *
+   * Deliberately a separate step she starts herself rather than something the
+   * scan does automatically at the end: it is one more paid request, and after
+   * a long scan she should be the one deciding whether to spend it.
+   */
+  const [analysis, setAnalysis] = useState<CaseAnalysis | null>(null);
+  const [analysing, setAnalysing] = useState(false);
   /** How far through the parts she is, and roughly how much longer. */
   const [pct, setPct] = useState<number | null>(null);
   const [eta, setEta] = useState("");
@@ -426,6 +442,16 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
       void run(false, t);
       return;
     }
+    // An analysis she has already paid for comes back with everything else.
+    void (async () => {
+      try {
+        const row = await db.kv.get("caseAnalysis");
+        const v = row?.value as { analysis?: CaseAnalysis } | undefined;
+        if (v?.analysis) setAnalysis(v.analysis);
+      } catch {
+        /* nothing saved */
+      }
+    })();
     // Nothing handed over — pick up an unfinished scan if one was left behind.
     void (async () => {
       if (busy || chunksRef.current.length || partsRef.current.length) return;
@@ -850,6 +876,61 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
       setProgress("");
       setError("Couldn't read your archive: " + (e?.message || "unknown error"));
     }
+  };
+
+  /**
+   * Read the whole catalog at once and write the analysis no single part could.
+   *
+   * Runs over the findings, not the archive, so it is one request regardless of
+   * how big her export was.
+   */
+  const analyseWholeCase = async () => {
+    if (!result || analysing) return;
+    setAnalysing(true);
+    setError(null);
+    setLiveError(null);
+    setProgress("Reading the whole case together — patterns, timeline, danger indicators…");
+    try {
+      const out = await streamAdvocate({
+        connection: settings.connection,
+        apiKey: settings.apiKey,
+        model: SCAN_MODEL,
+        history: [{ role: "user", content: buildSynthesisPrompt(result, settings.hisNames) }],
+        caseContext: null,
+        webSearch: false,
+        mode: "scan",
+        onDelta: () => {},
+      });
+      const parsed = parseCaseAnalysis(out);
+      setAnalysis(parsed);
+      try {
+        await db.kv.put({ key: "caseAnalysis", value: { analysis: parsed, savedAt: Date.now() } });
+      } catch {
+        /* never fail an analysis over bookkeeping */
+      }
+    } catch (e: any) {
+      setLiveError(String(e?.message || e || "unknown"));
+    } finally {
+      setAnalysing(false);
+      setProgress("");
+    }
+  };
+
+  /** Put the analysis in Documents, where it goes into the attorney packet. */
+  const saveAnalysisAsDoc = async () => {
+    if (!analysis) return;
+    const now = Date.now();
+    await db.documents.add({
+      title: `Case analysis — patterns across the whole record (${new Date().toISOString().slice(0, 10)})`,
+      content:
+        "Written by reading every finding from the deep scan together, rather than " +
+        "message by message. Everything below is drawn from quotes already in your " +
+        "records.\n\n" +
+        analysisAsText(analysis),
+      createdAt: now,
+      updatedAt: now,
+    });
+    setAdded("Saved the case analysis to Documents.");
   };
 
   const toggle = (set: Set<number>, i: number, save: (s: Set<number>) => void) => {
@@ -1390,6 +1471,151 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
               </button>
             </div>
           )}
+
+          <div className="panel">
+            <h2>See the whole case at once</h2>
+            <p className="small" style={{ marginTop: 0 }}>
+              The scan reads your archive in parts, a few weeks at a time, so no single part
+              can see the shape of the whole thing — whether it got worse, what it happened
+              around, which of the danger signs are actually present, who else saw it, and
+              where his own words contradict what he'll say in court. This reads every finding
+              together and writes that down. It's one more request, over the findings rather
+              than the messages, so it's quick and costs a fraction of a scan.
+            </p>
+            {!analysis && (
+              <button className="btn" disabled={analysing || busy} onClick={() => void analyseWholeCase()}>
+                {analysing ? "Reading the whole case…" : "Analyse the whole case"}
+              </button>
+            )}
+
+            {analysis && (
+              <>
+                {analysis.headline && (
+                  <p style={{ whiteSpace: "pre-wrap", fontWeight: 600 }}>{analysis.headline}</p>
+                )}
+
+                {analysis.lethality.some((l) => l.present !== "not in this record") && (
+                  <div className="item-card sev-5">
+                    <div className="head">
+                      <span className="title">
+                        Danger indicators present: {lethalityCount(analysis)} confirmed
+                      </span>
+                    </div>
+                    <p className="small" style={{ margin: "6px 0" }}>
+                      These are the factors research links to the most serious outcomes. They
+                      are the strongest support a Texas protective order can have.
+                    </p>
+                    {analysis.lethality
+                      .filter((l) => l.present !== "not in this record")
+                      .map((l, i) => (
+                        <div key={i} style={{ margin: "8px 0" }}>
+                          <strong>
+                            {l.factor} — {l.present}
+                            {l.date ? ` (${l.date})` : ""}
+                          </strong>
+                          {l.evidence && (
+                            <p style={{ whiteSpace: "pre-wrap", margin: "2px 0 0" }}>"{l.evidence}"</p>
+                          )}
+                        </div>
+                      ))}
+                  </div>
+                )}
+
+                {analysis.trajectory && (
+                  <>
+                    <h3>How it changed over time</h3>
+                    <p style={{ whiteSpace: "pre-wrap" }}>{analysis.trajectory}</p>
+                  </>
+                )}
+
+                {analysis.clusters.length > 0 && (
+                  <>
+                    <h3>When it got worse, and what was happening</h3>
+                    {analysis.clusters.map((c, i) => (
+                      <div className="item-card" key={i}>
+                        <div className="head">
+                          <span className="date">{c.period}</span>
+                          <span className="title">{c.trigger}</span>
+                        </div>
+                        <p style={{ whiteSpace: "pre-wrap", margin: "6px 0 0" }}>{c.what}</p>
+                      </div>
+                    ))}
+                  </>
+                )}
+
+                {analysis.cycle && (
+                  <>
+                    <h3>The pattern it repeats</h3>
+                    <p style={{ whiteSpace: "pre-wrap" }}>{analysis.cycle}</p>
+                  </>
+                )}
+
+                {analysis.contradictions.length > 0 && (
+                  <>
+                    <h3>His own words that undercut him ({analysis.contradictions.length})</h3>
+                    <p className="small muted" style={{ marginTop: 0 }}>
+                      In Texas his own statements come in against him. These are the ones that
+                      will not sit alongside the position he is likely to take.
+                    </p>
+                    {analysis.contradictions.map((c, i) => (
+                      <div className="item-card" key={i}>
+                        <div className="head">
+                          {c.date && <span className="date">{c.date}</span>}
+                          <span className="title">{c.contradicts}</span>
+                        </div>
+                        <p style={{ whiteSpace: "pre-wrap", margin: "6px 0", fontWeight: 600 }}>
+                          "{c.hisWords}"
+                        </p>
+                        <p className="small muted" style={{ margin: 0 }}>{c.whyItMatters}</p>
+                      </div>
+                    ))}
+                  </>
+                )}
+
+                {analysis.corroboration.length > 0 && (
+                  <>
+                    <h3>Proof that doesn't depend on your word ({analysis.corroboration.length})</h3>
+                    {analysis.corroboration.map((c, i) => (
+                      <div className="item-card" key={i}>
+                        <div className="head">
+                          {c.date && <span className="date">{c.date}</span>}
+                          <span className="title">
+                            {c.kind === "record" ? "Record" : "Witness"}: {c.who}
+                          </span>
+                        </div>
+                        <p style={{ whiteSpace: "pre-wrap", margin: "6px 0" }}>{c.what}</p>
+                        <p className="small muted" style={{ margin: 0 }}>{c.howToGetIt}</p>
+                      </div>
+                    ))}
+                  </>
+                )}
+
+                {analysis.gaps.length > 0 && (
+                  <>
+                    <h3>What's missing</h3>
+                    <ul style={{ lineHeight: 1.7 }}>
+                      {analysis.gaps.map((g, i) => (
+                        <li key={i}>{g}</li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+
+                <div className="row" style={{ gap: 8, marginTop: 10 }}>
+                  <button className="btn secondary" onClick={() => void saveAnalysisAsDoc()}>
+                    Save this to Documents
+                  </button>
+                  <button
+                    className="btn ghost"
+                    disabled={analysing}
+                    onClick={() => void analyseWholeCase()}
+                  >
+                    Run it again
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
 
           <div className="panel">
             <h2>What the scan found</h2>
