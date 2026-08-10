@@ -66,12 +66,41 @@ export function messagesFromCsv(raw: string): ParsedMessage[] {
   const findCol = (patterns: RegExp[]) =>
     header.findIndex((h) => patterns.some((p) => p.test(h)));
   const d = findCol([/date/, /^time/, /timestamp/, /when/, /sent/]);
-  const s = findCol([/sender/, /^from/, /author/, /^name$/, /contact/]);
-  const t = findCol([/text/, /body/, /message/, /content/]);
-  if (d >= 0 || s >= 0 || t >= 0) {
+  // A NAME first, and only then an ID.
+  //
+  // This used to be one pattern, /sender/, taking whichever column matched
+  // first. A phone export carries "Sender ID" before "Sender Name", so every
+  // one of his messages was filed under a phone number instead of his name —
+  // and the app asks her to tap his name to mark which messages are his.
+  const s = findCol([/sender name/, /^name$/, /^from$/, /author/, /contact/]);
+  const sid = findCol([/sender/, /^from/, /number/]);
+  // Direction, which is what makes HER messages attributable at all.
+  const dir = findCol([/^type$/, /direction/, /in\s*\/?\s*out/]);
+  // The message column, and this one was catastrophic.
+  //
+  // It used to be findCol([/text/, /body/, /message/, /content/]), taking the
+  // first header matching any of them. A phone export's first column after the
+  // chat name is "Message Date" — which matches /message/. So every import took
+  // column 1 as the message body, and her entire archive was stored as 26,399
+  // copies of a timestamp. The scan then read a document made of nothing but
+  // dates and, correctly, found no abuse in it.
+  //
+  // Prefer an exact name; fall back to a loose match that refuses anything
+  // which is plainly a date or time column.
+  const t = (() => {
+    const exact = header.findIndex((h) =>
+      /^(text|body|message|content|message text|message body|body text)$/.test(h)
+    );
+    if (exact >= 0) return exact;
+    return header.findIndex(
+      (h) => /(text|body|message|content)/.test(h) && !/(date|time|stamp)/.test(h)
+    );
+  })();
+  if (d >= 0 || s >= 0 || sid >= 0 || t >= 0) {
     start = 1;
     if (d >= 0) dateIdx = d;
     if (s >= 0) senderIdx = s;
+    else if (sid >= 0) senderIdx = sid;
     if (t >= 0) textIdx = t;
   }
 
@@ -80,9 +109,23 @@ export function messagesFromCsv(raw: string): ParsedMessage[] {
     const r = rows[i];
     const text = (r[textIdx] || "").trim();
     if (!text) continue;
+    // Her own messages carry no sender at all — a phone export only names the
+    // other party — so 11,505 of the 24,928 messages in her real archive were
+    // filed as "unknown". Nearly half the conversation arrived at the scanner
+    // attributed to nobody, while the prompt asks it to catalog her own words
+    // and the fear she recorded at the time, and to treat his words as
+    // admissions. Neither is possible without knowing who spoke.
+    //
+    // The direction column is populated on every row of that export, so this
+    // is fully recoverable: outgoing is hers, incoming is his.
+    const name = (r[senderIdx] || "").trim();
+    const direction = dir >= 0 ? (r[dir] || "").trim().toLowerCase() : "";
+    const outgoing = /outgoing|^sent$|^me$|^self$/.test(direction);
+    const incoming = /incoming|^received$/.test(direction);
+    const fallbackId = sid >= 0 ? (r[sid] || "").trim() : "";
     out.push({
       ...parseDateTime((r[dateIdx] || "").trim()),
-      sender: (r[senderIdx] || "unknown").trim() || "unknown",
+      sender: name || (outgoing ? "Me" : fallbackId || (incoming ? "Them" : "unknown")),
       text,
     });
   }
