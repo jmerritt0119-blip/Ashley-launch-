@@ -218,7 +218,7 @@ Respond with ONLY valid JSON — no markdown fences, no commentary before or aft
       "askHer": "the single question she could answer that would confirm or rule this out"
     }
   ],
-  "summary": "1-3 sentences naming the patterns found in this part"
+  "summary": "3-6 sentences naming the patterns found, roughly how often they appear, and how they change over time"
 }
 
 Allowed categories: ${JSON.stringify(INCIDENT_CATEGORIES)}
@@ -438,7 +438,7 @@ Rules:
   "Be conservative" means do not inflate a 3 into a 5. It does NOT mean avoiding
   5 — a 5 that is recorded as a 3 buries the evidence that decides a protective
   order, and those are the entries her attorney and the court need first.
-- Stay within limits, and be strict about it: keep at most 12 flaggedMessages and 6 incidents from this part — the most legally significant ones (favor threats, violence, admissions, and anything involving children) — and note in "summary" that more of the same pattern exists. A part is small; a catalog that runs long is one that never gets delivered at all.
+- Stay within limits: if this part holds an overwhelming number of similar quotes, keep the ~60 most legally significant flaggedMessages (favor threats, violence, admissions, and anything involving children) and note in "summary" that more of the same pattern exists.
 - If the document contains nothing relevant, return empty arrays and say so in "summary".
 
 DOCUMENT:
