@@ -19,13 +19,38 @@ import type { Settings } from "../settings";
 import { recordImport, sha256Hex } from "../integrity";
 
 /**
+ * Is this actually a spreadsheet, or is it prose that happens to contain commas?
+ *
+ * It has to be a header row, and it has to name the column holding the message
+ * text. Without one, messagesFromCsv falls back to assuming the first three
+ * columns are date, sender and text — which is a reasonable guess for a real
+ * export and a catastrophic one for ordinary writing.
+ *
+ * "if the cops come here again, I'll tell them you hit me first, and who do you
+ * think they believe" contains two commas, so it was being read as three
+ * columns and filed as a message from a sender called "I'll tell them you hit
+ * me first" whose text was "and who do you think they believe". Her own words,
+ * cut into fragments and attributed to people who do not exist, in the archive
+ * that goes to her attorney.
+ *
+ * Requiring the header is the difference between recognising a file and
+ * guessing at one. A genuine phone export always carries it.
+ */
+function looksLikeCsvExport(doc: string): boolean {
+  const firstLine = doc.slice(0, 4000).split("\n")[0] || "";
+  if (!firstLine.includes(",")) return false;
+  const header = firstLine.toLowerCase();
+  // The same column the parser needs in order to know what the message is.
+  return /(^|,)\s*"?[^,"]*(text|body|message|content)[^,"]*"?\s*(,|$)/.test(header);
+}
+
+/**
  * A CSV export is imported by code, not by the AI: every row lands in the
  * archive verbatim before a single token is spent. The model's job is then
  * only to flag and categorize — so a model mistake can never lose a message.
  */
 function detectCsvMessages(doc: string): ParsedMessage[] {
-  const head = doc.slice(0, 4000);
-  if (!head.includes(",")) return [];
+  if (!looksLikeCsvExport(doc)) return [];
   try {
     const rows = messagesFromCsv(doc);
     return rows.length >= 3 ? rows : [];
@@ -406,7 +431,15 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
 
-  const run = async (resume = false, docOverride?: string) => {
+  /**
+   * `archiveFirst` is false when the document IS the archive.
+   *
+   * A re-scan renders her saved messages back into text and scans that. Feeding
+   * it to the importer as well asks the app to import a file it wrote itself,
+   * which at best re-adds what is already there and at worst reads her prose as
+   * columns. Nothing that came out of the database goes back into it.
+   */
+  const run = async (resume = false, docOverride?: string, archiveFirst = true) => {
     if (busy || needsKey) return;
     let chunks: string[];
     let indices: number[];
@@ -445,13 +478,15 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     if (!resume) {
       docRef.current = chunks.join("\n");
       setPct(null);
-    setEta("");
-    setProgress("Saving every message to your archive…");
-      try {
-        const n = await archiveCsv(docOverride ?? text);
-        if (n) setProgress(`${n.toLocaleString()} messages saved. Now reading them…`);
-      } catch {
-        /* archive failure must not block the scan */
+      setEta("");
+      if (archiveFirst) {
+        setProgress("Saving every message to your archive…");
+        try {
+          const n = await archiveCsv(docOverride ?? text);
+          if (n) setProgress(`${n.toLocaleString()} messages saved. Now reading them…`);
+        } catch {
+          /* archive failure must not block the scan */
+        }
       }
     }
     const abort = new AbortController();
@@ -721,7 +756,9 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
       setLoadedNote(
         `Reading ${rows.length.toLocaleString()} messages straight from your archive — nothing to upload.`
       );
-      await run(false, doc);
+      // These messages are already saved; importing them again is what must not
+      // happen.
+      await run(false, doc, false);
     } catch (e: any) {
       setProgress("");
       setError("Couldn't read your archive: " + (e?.message || "unknown error"));
