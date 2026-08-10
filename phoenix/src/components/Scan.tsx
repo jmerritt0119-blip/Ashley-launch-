@@ -815,9 +815,27 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
               Scan remaining parts ({remaining.length})
             </button>
           )}
-          {!busy && archivedCount > 0 && (
-            <button className="btn" onClick={() => void rescanArchive()}>
-              Scan everything in my archive again
+          {/*
+            Always shown, never hidden on a condition she cannot see.
+            Hiding it when the archive is empty meant an empty device and a
+            stale cached page looked identical — there was no way to tell
+            whether the button was missing or the archive was. It now says
+            which, and the count is on the face of it.
+          */}
+          {!busy && (
+            <button
+              className="btn"
+              disabled={!archivedCount}
+              onClick={() => void rescanArchive()}
+              title={
+                archivedCount
+                  ? "Reads the messages already saved on this device"
+                  : "There are no messages saved on this device yet"
+              }
+            >
+              {archivedCount
+                ? `Scan my ${archivedCount.toLocaleString()} saved messages again`
+                : "Scan my saved messages (none yet)"}
             </button>
           )}
           <button className="btn ghost" disabled={busy} onClick={() => fileRef.current?.click()}>
