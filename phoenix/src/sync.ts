@@ -48,20 +48,38 @@ export async function pushVault(
   passphrase: string,
   includeFiles: boolean,
   recoveryKey?: string
-): Promise<number> {
-  const data = await exportAllData(includeFiles);
-  const envelope: any = await encryptJson(data, passphrase);
-  if (recoveryKey) {
-    envelope.escrow = await encryptJson({ passphrase }, recoveryKey);
+): Promise<{ savedAt: number; filesDropped: boolean }> {
+  const send = async (withFiles: boolean) => {
+    const data = await exportAllData(withFiles);
+    const envelope: any = await encryptJson(data, passphrase);
+    if (recoveryKey) {
+      envelope.escrow = await encryptJson({ passphrase }, recoveryKey);
+    }
+    return fetch(`/api/vault?code=${encodeURIComponent(code)}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(envelope),
+    });
+  };
+
+  let res = await send(includeFiles);
+  let filesDropped = false;
+
+  // 413: over the vault's 40MB ceiling. The server's own advice is to turn off
+  // photos and videos — advice nobody could follow, because there was no switch
+  // for it anywhere in the app. Do it here instead of stopping.
+  //
+  // Her words are what she needs on her phone: incidents, messages, findings,
+  // journal. Evidence files are the bulk of the payload and base64 adds a third
+  // again on top of that; they stay on the device that holds them.
+  if (res.status === 413 && includeFiles) {
+    res = await send(false);
+    filesDropped = true;
   }
-  const res = await fetch(`/api/vault?code=${encodeURIComponent(code)}`, {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(envelope),
-  });
+
   if (!res.ok) throw new Error(await readError(res, "Couldn't save to the vault. Try again."));
   const body = await res.json();
-  return body.savedAt as number;
+  return { savedAt: body.savedAt as number, filesDropped };
 }
 
 /** Download, decrypt on-device, and merge into this device's records. */

@@ -69,11 +69,22 @@ Created ${new Date().toLocaleString()}
     setVaultBusy(true);
     setVaultMsg("Encrypting everything on this device…");
     try {
-      const savedAt = await pushVault(code, vaultPass, settings.vaultIncludeFiles, key);
+      const { savedAt, filesDropped } = await pushVault(
+        code,
+        vaultPass,
+        settings.vaultIncludeFiles,
+        key
+      );
       update({ vaultCode: code, vaultRecoveryKey: key });
       setRecoveryKey(key);
       await db.kv.put({ key: "vaultSavedAt", value: savedAt });
-      setVaultMsg("Saved. Save your Recovery Kit below — it's how you get back in if you forget the passphrase.");
+      setVaultMsg(
+        filesDropped
+          ? "Saved — but it was too big with the photos and videos in it, so those stayed on this device. " +
+            "Everything written is in there: your incidents, every message, what the scan found, and your journal. " +
+            "Save your Recovery Kit below — it's how you get back in if you forget the passphrase."
+          : "Saved. Save your Recovery Kit below — it's how you get back in if you forget the passphrase."
+      );
     } catch (e: any) {
       setVaultMsg(e?.message || "Couldn't save to the vault.");
     } finally {
