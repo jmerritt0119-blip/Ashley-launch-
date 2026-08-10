@@ -17,7 +17,14 @@ name: Probe Advocate
 # sends a scan-shaped request — scan mode, the scan model, a document — so it
 # fails the same way hers does.
 
+# Triggered by touching .github/probe-request.txt rather than by
+# workflow_dispatch, because GitHub only offers "Run workflow" for files that
+# already exist on the default branch — and this one lives on a feature branch
+# while the fixes it is diagnosing are still in review.
 on:
+  push:
+    paths:
+      - ".github/probe-request.txt"
   workflow_dispatch:
     inputs:
       mode:
