@@ -459,9 +459,29 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
   };
 
   const applyMerged = (merged: ScanResult) => {
-    setResult(merged);
-    setPickedInc(new Set(merged.incidents.map((_, i) => i)));
-    setPickedMsg(new Set(merged.messages.map((_, i) => i)));
+    // Worst first, and sorted HERE rather than at render.
+    //
+    // The list is capped at 400 for page speed, and parts come back in
+    // whatever order they finish. Left in arrival order, a severity 5 found in
+    // part 200 can be pushed off the visible list by a hundred entries about
+    // scheduling — the most serious thing in her archive, invisible because of
+    // when it happened to be read.
+    //
+    // Sorting the canonical array rather than the rendered copy is deliberate:
+    // the checkboxes, the selected set and the filing step all address
+    // incidents by position, so ordering anywhere else would tick the wrong
+    // boxes and file the wrong entries.
+    const ranked: ScanResult = {
+      ...merged,
+      incidents: [...merged.incidents].sort(
+        (a, b) =>
+          (b.severity || 0) - (a.severity || 0) ||
+          (b.date || "").localeCompare(a.date || "")
+      ),
+    };
+    setResult(ranked);
+    setPickedInc(new Set(ranked.incidents.map((_, i) => i)));
+    setPickedMsg(new Set(ranked.messages.map((_, i) => i)));
   };
 
   // The home screen can hand a freshly uploaded file straight here — load it
@@ -1465,7 +1485,7 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
                   {result.incidents.length === 1 ? "" : "s"} and {result.messages.length} message
                   {result.messages.length === 1 ? "" : "s"}
                 </strong>{" "}
-                — listed further down this page, and they keep appearing as it goes.
+                — the most serious so far are below, and the list re-ranks itself as it goes.
               </p>
             )}
             {dupes > 0 && (
@@ -1482,8 +1502,12 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
               // reassuring; seeing the actual thing it just found in her own
               // record is the difference between believing it works and hoping.
               <ul className="small muted" style={{ margin: "4px 0 0", paddingLeft: 18, lineHeight: 1.6 }}>
-                {result.incidents.slice(-3).reverse().map((i, n) => (
+                {result.incidents.slice(0, 3).map((i, n) => (
                   <li key={`${i.date}-${n}`}>
+                    <span className="sev-dots">
+                      {"\u25CF".repeat(i.severity)}
+                      {"\u25CB".repeat(Math.max(0, 5 - i.severity))}
+                    </span>{" "}
                     <strong>{i.date || "no date"}</strong> — {(i.title || "").slice(0, 90)}
                   </li>
                 ))}
