@@ -1519,7 +1519,7 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
                 type="text"
                 className="input"
                 style={{ marginTop: 4 }}
-                placeholder="e.g. Cadence, Emma"
+                placeholder="e.g. his girlfriend's name, your children's names"
                 value={settings.otherNames}
                 onChange={(e) => update({ otherNames: e.target.value })}
               />

@@ -27,7 +27,7 @@ export interface Settings {
    * children, his family, a witness.
    *
    * These are not senders — they are people talked ABOUT. A name here is the
-   * difference between "Cadence is moving in on the 3rd" reading as ordinary
+   * difference between "she is moving in on the 3rd" reading as ordinary
    * chatter and reading as the dated arrival of a new partner in the home, and
    * between a child's name being scenery and being the child the case is about.
    * The scanner cannot infer that from a message archive; a first name in a

@@ -263,8 +263,8 @@ export function buildScanPrompt(
   // decides what gets cataloged, was never told at all.
   //
   // The people talked ABOUT matter just as much and cannot be inferred at all.
-  // A first name in a text carries no role: "Cadence is moving in on the 3rd"
-  // is ordinary chatter unless you know Cadence is the woman he brought into
+  // A first name in a text carries no role: "she is moving in on the 3rd"
+  // is ordinary chatter unless you know who that names — the woman he brought into
   // the home, and then it is a dated fact about the arrangement.
   //
   // This sits in the stable part of the prompt, before the per-part note, so it
@@ -539,7 +539,7 @@ because everyone involved treats it as a private humiliation rather than as
 evidence. Look for it deliberately, and record what you find in the category
 each item actually belongs to:
 - The arrangement itself: when the other woman first appears, when she came to
-  the home, whether Ashley was still living there, whether she was pushed to
+  the home, whether she was still living there, whether she was pushed to
   accept it, tolerate it, keep quiet about it, or leave. Being made to live
   alongside it, or driven out of her own home by it, is degradation and
   coercive control (Duluth: asserting privilege, emotional abuse), and in Texas
@@ -553,11 +553,11 @@ each item actually belongs to:
   not about her character. It matters for three concrete reasons, and you
   should capture each separately: (a) the child's existence and age can date
   when the relationship began, often earlier than he will admit — a timeline
-  anchor; (b) it brings further adults into contact with Ashley's daughter,
+  anchor; (b) it brings further adults into contact with her daughter,
   including that child's father, so capture any name, visit, or handover; and
   (c) it establishes what he chooses to fund, which is the sharpest possible
   contradiction of any claim of poverty.
-- The child: what Ashley's daughter was told, what she was told to call the
+- The child: what her daughter was told, what she was told to call the
   other woman, whether she was displaced from her room or her routine, any
   favouring of the other child, who supervises, and anything she reported back.
   This is best-interest evidence and belongs in caseFacts as parenting capacity
@@ -567,7 +567,7 @@ each item actually belongs to:
   the custody case. That is the DARVO pattern and it is what later gets
   presented to a court as her instability. Quote both the objection and the
   response.
-- The other woman used as an instrument: passing messages, monitoring Ashley,
+- The other woman used as an instrument: passing messages, monitoring her,
   contacting her, appearing at exchanges, or being put on accounts, schools or
   contact lists. That is third-party recruitment, not a separate relationship.
 Record only what the messages actually show, quoted, exactly as with everything
