@@ -375,9 +375,15 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
         : doc;
       chunks = chunkScanInput(forScan);
       chunksRef.current = chunks;
-      partsRef.current = [];
       indices = chunks.map((_, i) => i);
-      setResult(null);
+      // Findings from an earlier run are KEPT.
+      //
+      // Starting a scan used to clear them, so stopping a long run and
+      // starting again wiped everything it had found off the screen — hours of
+      // reading, gone, with no warning and nothing she did wrong. The merge
+      // already deduplicates by date and content, so carrying them forward
+      // costs nothing and re-finding the same incident cannot double it.
+      indices = chunks.map((_, i) => i);
     }
     setBusy(true);
     setError(null);
