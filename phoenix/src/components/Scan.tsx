@@ -1013,13 +1013,34 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
    * 2 — the list is empty, so add the file
    * 3 — real messages are saved, so scan them
    */
-  const step = broken && broken > 0 ? 1 : archivedCount === 0 ? 2 : 3;
   /**
-   * Show the plan when the archive is actually broken, and keep showing it
-   * until she has been walked all the way to a scan — otherwise clearing makes
-   * the instructions vanish at the exact moment she needs step two.
+   * Is the archive actually broken, or are there simply a few empty messages?
+   *
+   * The importer fault this repairs takes the wrong column and stores a
+   * timestamp as EVERY message — an archive where nothing anyone wrote is
+   * present at all. That is what the plan is for.
+   *
+   * Triggering on any count above zero turned a rounding error into an alarm:
+   * on a real device it announced "7 of your saved messages came in showing
+   * only a date" out of 24,740, and offered to delete all 24,740 to fix them.
+   * Seven date-only rows in an export that size are seven empty texts.
+   *
+   * So: a fifth of the archive, and at least fifty rows. Below that, say
+   * nothing — an unnecessary warning about her evidence being corrupt costs
+   * more than seven skipped rows ever could.
    */
-  const needsRepair = (broken !== null && broken > 0) || (repairing && step < 3) || (repairing && step === 3);
+  const brokenEnough =
+    broken !== null &&
+    broken >= 50 &&
+    !!archivedCount &&
+    broken >= archivedCount * 0.2;
+  const step = brokenEnough ? 1 : archivedCount === 0 ? 2 : 3;
+  /**
+   * Keep showing the plan until she has been walked all the way to a scan —
+   * otherwise clearing makes the instructions vanish at the exact moment she
+   * needs step two.
+   */
+  const needsRepair = brokenEnough || repairing;
 
   const clearArchive = async () => {
     const n = archivedCount || 0;
