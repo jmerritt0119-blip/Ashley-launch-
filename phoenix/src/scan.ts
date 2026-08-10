@@ -134,7 +134,36 @@ export interface ScanResult {
  * sixty-second wall to hit, so the long arc is assembled somewhere it can
  * actually finish.
  */
-export const SCAN_CHUNK_SIZE = 10_000;
+export const SCAN_CHUNK_SERVER = 10_000;
+
+/**
+ * The same job with no wall in front of it.
+ *
+ * A scan sent through the site goes via a serverless function that is killed at
+ * sixty seconds — measured, not assumed. A scan sent with her own key goes from
+ * the browser straight to Anthropic, touches no function, and has no such
+ * limit. The part size that survives one route is not the part size that suits
+ * the other, and until now both used the smaller one.
+ *
+ * 60,000 is the width the first scan had, the one described as remarkable. It
+ * matters because abuse is a pattern and a pattern needs a window wide enough
+ * to hold it: the message in March that explains the one in June, the apology
+ * three days after the argument, the same threat escalating over a month.
+ *
+ * It is also cheaper, which is the opposite of what shrinking parts suggested.
+ * The ~29,000 characters of instructions ride in front of EVERY part, so her
+ * archive at 10,000 is about 165 parts of overhead and at 60,000 about 28.
+ * Fewer, wider parts cost less and see more.
+ */
+export const SCAN_CHUNK_DIRECT = 60_000;
+
+/** Which of the two applies, given how this device is talking to the model. */
+export function scanChunkSize(connection?: string): number {
+  return connection === "direct" ? SCAN_CHUNK_DIRECT : SCAN_CHUNK_SERVER;
+}
+
+/** Kept so existing callers and tools stay on the cautious figure. */
+export const SCAN_CHUNK_SIZE = SCAN_CHUNK_SERVER;
 
 /**
  * The model every deep scan runs on, regardless of the chat model picker.
@@ -198,29 +227,33 @@ export const SCANNER_NOTES: Record<number, string> = {
  * A range rather than a figure, because parts vary and a precise number would
  * be a lie.
  */
-export function estimateScanTime(chars: number) {
-  const parts = Math.max(1, Math.ceil(chars / SCAN_CHUNK_SIZE));
-  // Four parts at a time. Parts are smaller than they were, so each one lands
-  // faster — roughly twenty to fifty seconds — but there are more of them.
-  const minsLow = Math.max(1, Math.round((parts / 4) * 0.35));
-  const minsHigh = Math.max(2, Math.round((parts / 4) * 0.85));
+export function estimateScanTime(chars: number, size: number = SCAN_CHUNK_SERVER) {
+  const parts = Math.max(1, Math.ceil(chars / size));
+  // Four parts at a time, and a part takes about as long as it takes to WRITE
+  // its catalog — which scales with how much it was given to read. A 10,000
+  // character part lands in twenty to fifty seconds; a 60,000 character one
+  // takes six times as long and is worth the wait, because it sees six times
+  // as much at once.
+  const perPart = size / 10_000;
+  const minsLow = Math.max(1, Math.round((parts / 4) * 0.35 * perPart));
+  const minsHigh = Math.max(2, Math.round((parts / 4) * 0.85 * perPart));
   return { parts, minsLow, minsHigh };
 }
 
-export function chunkScanInput(text: string): string[] {
+export function chunkScanInput(text: string, size: number = SCAN_CHUNK_SERVER): string[] {
   const t = text.trim();
   if (!t) return [];
-  if (t.length <= SCAN_CHUNK_SIZE) return [t];
+  if (t.length <= size) return [t];
   const chunks: string[] = [];
   let cur = "";
   for (let line of t.split("\n")) {
-    while (line.length > SCAN_CHUNK_SIZE) {
+    while (line.length > size) {
       if (cur.trim()) chunks.push(cur);
       cur = "";
-      chunks.push(line.slice(0, SCAN_CHUNK_SIZE));
-      line = line.slice(SCAN_CHUNK_SIZE);
+      chunks.push(line.slice(0, size));
+      line = line.slice(size);
     }
-    if (cur && cur.length + line.length + 1 > SCAN_CHUNK_SIZE) {
+    if (cur && cur.length + line.length + 1 > size) {
       chunks.push(cur);
       cur = line;
     } else {

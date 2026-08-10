@@ -387,20 +387,20 @@ async function viaDirect(opts: AdvocateOpts): Promise<string> {
   const isScan = opts.mode === "scan";
   const params: any = {
     model: opts.model,
-    // NOT the same ceiling for both, and the difference is the whole reason a
-    // scan finishes.
+    // This route has no wall, so it does not wear the wall's ceiling.
     //
-    // Chat is one answer to one question and can afford to run long. A scan
-    // part is billed against a serverless function that is killed at a fixed
-    // wall-clock limit, and what governs whether a part survives is how much
-    // JSON it has to write — proven on her own archive in #52. Opus writes
-    // slower than Sonnet, so the ceiling has to sit lower here than it did
-    // when Sonnet was doing this job, not higher.
+    // A scan sent through the site goes via a serverless function that the
+    // platform kills at sixty seconds — measured on the live endpoint, not
+    // assumed — so that path is capped at 3,000 tokens, about what Opus can
+    // write in a minute. THIS function is the other route: the browser talking
+    // straight to Anthropic, with no function in the middle and nothing to time
+    // it out. Carrying the same 3,000 here truncated catalogs for a limit that
+    // was never in the way, on exactly the dense parts that matter most.
     //
-    // 10,000 is a ceiling, not a target. A part that needs more than this is a
-    // part that should have been smaller, and it is now split and re-read
-    // rather than silently truncated.
-    max_tokens: isScan ? 3000 : 32000,
+    // 16,000 is a ceiling, not a target: it costs nothing unless a part has
+    // that much to say, and a part that hits it is still split and re-read
+    // rather than silently trimmed.
+    max_tokens: isScan ? 16000 : 32000,
     system,
     // Same cache split the site's function makes, so a scan run on her own key
     // is billed the same way as one run through the site — the instructions in

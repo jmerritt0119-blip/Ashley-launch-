@@ -9,7 +9,7 @@ import {
   estimateScanTime,
   mergeScanResults,
   parseScanResult,
-  SCAN_CHUNK_SIZE,
+  scanChunkSize,
   SCAN_MODEL,
   SCANNER_VERSION,
   type ScanResult,
@@ -282,9 +282,13 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
   const abortRef = useRef<AbortController | null>(null);
 
   const needsKey = settings.connection === "direct" && !settings.apiKey;
-  const estParts = Math.max(1, Math.ceil(text.trim().length / SCAN_CHUNK_SIZE));
+  // How wide a part may be depends on how this device reaches the model: a
+  // scan through the site is killed at sixty seconds, a scan on her own key is
+  // not, and the second can therefore read six times as much at once.
+  const partSize = scanChunkSize(settings.connection);
+  const estParts = Math.max(1, Math.ceil(text.trim().length / partSize));
   const estimate = useMemo(
-    () => (text.trim().length > 0 ? estimateScanTime(text.trim().length) : null),
+    () => (text.trim().length > 0 ? estimateScanTime(text.trim().length, partSize) : null),
     [text]
   );
 
@@ -510,7 +514,7 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
         const rechunked: string[] = [];
         const remap = new Map<number, number[]>();
         saved.chunks.forEach((c, i) => {
-          const pieces = c.length > SCAN_CHUNK_SIZE ? chunkScanInput(c) : [c];
+          const pieces = c.length > partSize ? chunkScanInput(c, partSize) : [c];
           remap.set(
             i,
             pieces.map((p) => {
@@ -582,7 +586,7 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
       // worth nothing if it stops finding her evidence, so the shape the
       // scanner was proven against is the shape it gets. Speed can be revisited
       // once there is a working baseline to measure against, and not before.
-      chunks = chunkScanInput(doc);
+      chunks = chunkScanInput(doc, partSize);
       chunksRef.current = chunks;
       indices = chunks.map((_, i) => i);
       // Findings from an earlier run are KEPT.
@@ -1270,7 +1274,7 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
         )}
         <p className="muted small" style={{ margin: "6px 0" }}>
           {text.trim().length.toLocaleString()} characters
-          {text.trim().length > SCAN_CHUNK_SIZE
+          {text.trim().length > partSize
             ? ` — will scan in ${estParts} parts, automatically`
             : " — no size limit; paste or upload the whole export"}
         </p>
