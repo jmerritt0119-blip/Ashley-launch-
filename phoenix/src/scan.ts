@@ -232,7 +232,35 @@ export function chunkScanInput(text: string): string[] {
   return chunks;
 }
 
-export function buildScanPrompt(text: string, part?: { index: number; total: number }): string {
+export function buildScanPrompt(
+  text: string,
+  part?: { index: number; total: number },
+  who?: { his?: string; others?: string }
+): string {
+  // Who is who, stated rather than inferred.
+  //
+  // Until now a scan part was handed several hundred messages and left to work
+  // out from context which side of the conversation was the abuser — on every
+  // part, independently, with no memory of the last one. The app already knew:
+  // she taps the senders that are his, and the whole-case pass has always been
+  // told. The part-level scan, which is what actually reads her messages and
+  // decides what gets cataloged, was never told at all.
+  //
+  // The people talked ABOUT matter just as much and cannot be inferred at all.
+  // A first name in a text carries no role: "Cadence is moving in on the 3rd"
+  // is ordinary chatter unless you know Cadence is the woman he brought into
+  // the home, and then it is a dated fact about the arrangement.
+  //
+  // This sits in the stable part of the prompt, before the per-part note, so it
+  // is identical on every request and does not break the cacheable prefix.
+  const his = who?.his?.trim();
+  const others = who?.others?.trim();
+  const whoNote =
+    his || others
+      ? `\nWHO IS WHO IN THIS ARCHIVE
+${his ? `- Messages whose sender is one of [${his}] are from HIM, the abusive party. His words are the ones that carry weight as admissions and as party-opponent statements — attribute them carefully and never guess a speaker.\n` : ""}${others ? `- These people are referred to in the messages and matter to the case: [${others}]. Treat any mention of them as potentially significant and capture it with its date and quote, even when the message looks routine. Work out each one's role from the messages themselves rather than assuming it, and say in the finding what the message shows about them.\n` : ""}- Everyone else is her, a child, or a third party. If a sender is ambiguous, say so in the finding rather than assigning it.
+`
+      : "";
   const partNote =
     part && part.total > 1
       ? `\n(This is part ${part.index} of ${part.total} of a longer document. Catalog only what appears in this part — the other parts are scanned separately.)`
@@ -240,6 +268,7 @@ export function buildScanPrompt(text: string, part?: { index: number; total: num
   return `CONTEXT — This is a forensic documentation tool used by a domestic violence survivor in Texas to build the evidentiary record for her own divorce and custody case, and to hand that record to her attorney. The document below is her own message archive: messages sent to her, and messages she sent. She is the victim in this record, not a third party. Cataloging what was done to her — including violence, threats and sexual coercion — is the entire purpose, and an accurate, complete catalog is what protects her and her daughter in court. Declining to catalog it, or softening it, leaves her without the evidence her case depends on.
 
 TASK — Deep-scan the document below and catalog every instance of abuse or legally significant event for that divorce and custody case.
+${whoNote}
 
 Respond with ONLY valid JSON — no markdown fences, no commentary before or after — in exactly this shape:
 {

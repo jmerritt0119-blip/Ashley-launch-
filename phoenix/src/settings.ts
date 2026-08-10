@@ -22,6 +22,18 @@ export interface Settings {
    * words are the ones that carry weight in court.
    */
   hisNames: string;
+  /**
+   * Everyone else the case turns on, by name: a new partner he moved in, her
+   * children, his family, a witness.
+   *
+   * These are not senders — they are people talked ABOUT. A name here is the
+   * difference between "Cadence is moving in on the 3rd" reading as ordinary
+   * chatter and reading as the dated arrival of a new partner in the home, and
+   * between a child's name being scenery and being the child the case is about.
+   * The scanner cannot infer that from a message archive; a first name in a
+   * text carries no role.
+   */
+  otherNames: string;
   /** Cloud vault: multi-device + attorney sharing. Empty = not enabled. */
   vaultCode: string;
   vaultRecoveryKey: string;
@@ -68,6 +80,7 @@ const DEFAULTS: Settings = {
   displayName: "",
   county: "",
   hisNames: "",
+  otherNames: "",
   vaultCode: "",
   vaultRecoveryKey: "",
   vaultIncludeFiles: true,

@@ -675,7 +675,11 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
             history: [
               {
                 role: "user",
-                content: buildScanPrompt(chunks[idx], { index: idx + 1, total: chunks.length }),
+                content: buildScanPrompt(
+                  chunks[idx],
+                  { index: idx + 1, total: chunks.length },
+                  { his: settings.hisNames, others: settings.otherNames }
+                ),
               },
             ],
             caseContext: null,
@@ -1350,6 +1354,29 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
                 Got it — messages from {settings.hisNames} are treated as his.
               </p>
             )}
+            {/*
+              Names of people talked about, not people who sent anything. The
+              buttons above only list senders, so a girlfriend he moved in, a
+              child, or a relative who never texted her is invisible to the
+              scan no matter how often the two of them wrote about her.
+            */}
+            <label className="small" style={{ display: "block", marginTop: 10 }}>
+              Anyone else this case is about — a new partner, your children, his
+              family, a witness. Separate names with commas.
+              <input
+                type="text"
+                className="input"
+                style={{ marginTop: 4 }}
+                placeholder="e.g. Cadence, Emma"
+                value={settings.otherNames}
+                onChange={(e) => update({ otherNames: e.target.value })}
+              />
+            </label>
+            <p className="muted small" style={{ marginBottom: 0 }}>
+              {settings.otherNames
+                ? `The scan will treat any mention of ${settings.otherNames} as worth recording, with its date.`
+                : "Without this, their names read as ordinary chatter and the scan passes over them."}
+            </p>
           </div>
         )}
         <p className="muted small" style={{ marginTop: 8 }}>
