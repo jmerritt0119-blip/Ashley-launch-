@@ -1,1 +1,1 @@
-probe 1 — scan-shaped request against the live endpoint
+probe 2 — scan-shaped request, workflow YAML repaired

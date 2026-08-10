@@ -87,9 +87,9 @@ jobs:
           echo "--- last 200 bytes ---"
           tail -c 200 /tmp/out.txt
           echo
-          #  is the marker the server appends on a clean finish. Its
+          # the DONE byte (0x04) is the marker the server appends on a clean finish. Its
           # absence means the stream died rather than ended.
-          if grep -q $'\004' /tmp/out.txt; then
+          if grep -qP '\x04' /tmp/out.txt; then
             echo "clean finish: yes (DONE marker present)"
           else
             echo "clean finish: NO — the stream was cut off"
