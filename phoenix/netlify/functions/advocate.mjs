@@ -36,11 +36,33 @@ export default async (req) => {
     return new Response('Malformed request.', { status: 400 });
   }
 
+  // Where the caller has marked the boundary between the instructions that
+  // never change and the messages that do, cut there and cache the first half.
+  //
+  // A Deep Scan sends ~29,000 characters of identical instructions in front of
+  // every part — 59 times for her archive, at full price each time, for text
+  // the model was handed thirty seconds earlier. Cached, those reads cost a
+  // tenth as much. The marker itself is a split point and is discarded, so the
+  // model sees exactly what it saw before, and a request without one is passed
+  // through untouched.
+  const CACHE_BREAK = '\n<<<PHOENIX-CACHE-BREAK>>>\n';
+  const asContent = (text) => {
+    const at = text.indexOf(CACHE_BREAK);
+    if (at < 0) return text;
+    const stable = text.slice(0, at);
+    const rest = text.slice(at + CACHE_BREAK.length);
+    return [
+      { type: 'text', text: stable, cache_control: { type: 'ephemeral' } },
+      { type: 'text', text: rest },
+    ];
+  };
+
   const incoming = Array.isArray(body?.messages) ? body.messages : [];
   const messages = incoming
     .filter((m) => m && (m.role === 'user' || m.role === 'assistant'))
     .map((m) => ({ role: m.role, content: String(m.content ?? '').slice(0, 200000) }))
-    .filter((m) => m.content.trim().length > 0);
+    .filter((m) => m.content.trim().length > 0)
+    .map((m) => ({ role: m.role, content: asContent(m.content) }));
   if (messages.length === 0) return new Response('There was nothing to respond to.', { status: 400 });
 
   const model = ALLOWED_MODELS.has(body?.model) ? body.model : DEFAULT_MODEL;

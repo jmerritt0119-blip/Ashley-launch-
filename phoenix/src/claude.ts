@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { db } from "./db";
 import { ADVOCATE_SYSTEM } from "./advocatePrompt";
+import { SCAN_CACHE_BREAK } from "./scan";
 
 export { ADVOCATE_SYSTEM };
 
@@ -328,6 +329,24 @@ async function viaServer(opts: AdvocateOpts): Promise<string> {
   return full;
 }
 
+/**
+ * Cuts a message at the cache marker so the unchanging half is billed at cache
+ * rates. Text without the marker is returned exactly as it came in, so chat and
+ * every other caller are untouched.
+ */
+function withCacheBreak(text: string): any {
+  const at = text.indexOf(SCAN_CACHE_BREAK);
+  if (at < 0) return text;
+  return [
+    {
+      type: "text",
+      text: text.slice(0, at),
+      cache_control: { type: "ephemeral" },
+    },
+    { type: "text", text: text.slice(at + SCAN_CACHE_BREAK.length) },
+  ];
+}
+
 async function viaDirect(opts: AdvocateOpts): Promise<string> {
   const client = new Anthropic({
     apiKey: opts.apiKey,
@@ -363,7 +382,10 @@ async function viaDirect(opts: AdvocateOpts): Promise<string> {
     // rather than silently truncated.
     max_tokens: isScan ? 10000 : 32000,
     system,
-    messages: opts.history.map((t) => ({ role: t.role, content: t.content })),
+    // Same cache split the site's function makes, so a scan run on her own key
+    // is billed the same way as one run through the site — the instructions in
+    // front of every part are read from cache instead of paid for 59 times.
+    messages: opts.history.map((t) => ({ role: t.role, content: withCacheBreak(t.content) })),
     // Deep Scan is set up exactly as the server sets it up, so a scan run on
     // her own API key catalogs the same way as one run through the site.
     //

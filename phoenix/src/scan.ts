@@ -232,6 +232,22 @@ export function chunkScanInput(text: string): string[] {
   return chunks;
 }
 
+/**
+ * Splits the scan prompt into the part that never changes and the part that
+ * does, so the first can be cached and charged at a tenth of the price.
+ *
+ * Everything before this marker is byte-identical on every part of every scan:
+ * ~29,000 characters of instructions, taxonomy and legal framing. Everything
+ * after it is the part number and her messages. Re-sending the instructions in
+ * full 59 times is roughly $2.35 of a $10 run, paid over and over for text the
+ * model has already been given.
+ *
+ * The marker is a split point, not content — whoever sends the request cuts on
+ * it and discards it, so the model never sees it. A request that does not
+ * contain it is sent exactly as before, which keeps every other caller working.
+ */
+export const SCAN_CACHE_BREAK = "\n<<<PHOENIX-CACHE-BREAK>>>\n";
+
 export function buildScanPrompt(
   text: string,
   part?: { index: number; total: number },
@@ -701,7 +717,7 @@ Rules:
   a category is genuinely absent from this part, that is a fine answer — but
   answer it deliberately rather than by not looking.
 - If the document contains nothing relevant, return empty arrays and say so in "summary".
-${partNote}
+${SCAN_CACHE_BREAK}${partNote}
 DOCUMENT:
 <<<
 ${text}
