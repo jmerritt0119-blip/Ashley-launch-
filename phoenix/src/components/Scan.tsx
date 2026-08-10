@@ -436,11 +436,30 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
       }
     };
 
-    for (let n = 0; n < indices.length; n++) {
-      const idx = indices[n];
+    // Four parts at a time.
+    //
+    // The parts are independent — each reads its own slice and returns its own
+    // catalog — so running them one after another was costing wall-clock for
+    // nothing. On her archive that was 152 minutes of sitting and waiting.
+    // Four at once brings it to roughly forty, and everything that made a
+    // sequential run safe still holds: progress is written after each batch,
+    // a failure still only costs its own part, and Stop still stops.
+    //
+    // Deliberately four rather than more: this is her phone on her connection,
+    // and hammering the API is how a run of failures starts.
+    const CONCURRENCY = 4;
+    let completed = 0;
+    for (let b = 0; b < indices.length; b += CONCURRENCY) {
       if (abort.signal.aborted) {
-        failed.push(...indices.slice(n));
+        failed.push(...indices.slice(b));
         break;
+      }
+      const batch = indices.slice(b, b + CONCURRENCY);
+      await Promise.all(batch.map(async (idx, k) => {
+      const n = b + k;
+      if (abort.signal.aborted) {
+        failed.push(idx);
+        return;
       }
       const label = chunks.length > 1 ? `part ${idx + 1} of ${chunks.length}` : "the document";
       const found = mergeScanResults(parts);
@@ -448,10 +467,10 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
         parts.length > 0
           ? ` ${found.incidents.length} incidents & ${found.messages.length} messages found so far.`
           : "";
-      setPct(Math.round((n / indices.length) * 100));
-      if (n > 0) {
-        const perPart = (Date.now() - startedAt) / n;
-        const leftMs = perPart * (indices.length - n);
+      setPct(Math.round((completed / indices.length) * 100));
+      if (completed > 0) {
+        const perPart = (Date.now() - startedAt) / completed;
+        const leftMs = perPart * (indices.length - completed);
         const mins = Math.round(leftMs / 60000);
         setEta(
           leftMs < 90_000
@@ -546,6 +565,8 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
         if (rescued === halves.length) ok = true;
       }
       if (!ok && !abort.signal.aborted) failed.push(idx);
+      // Published the instant this part returns — she should watch findings
+      // appear one at a time, not in silence and then four at once.
       if (parts.length) {
         const merged = mergeScanResults(parts);
         // Parts overlap at their boundaries and the same incident often shows
@@ -560,7 +581,12 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
 
       // Write progress after every part. A tab closed mid-scan now costs at
       // most the part that was in flight, instead of the entire run.
-      const stillToDo = [...failed, ...indices.slice(n + 1)];
+      }));
+
+      // Written after every batch rather than every part: the same guarantee,
+      // one disk write instead of four.
+      completed += batch.length;
+      const stillToDo = [...failed, ...indices.slice(b + batch.length)];
       await saveScanState(
         stillToDo.length
           ? { chunks, remaining: stillToDo, parts, total: chunks.length, savedAt: Date.now() }
