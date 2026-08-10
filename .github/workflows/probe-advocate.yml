@@ -43,18 +43,64 @@ jobs:
       - name: Ask the live endpoint and print the answer
         env:
           URL: https://phoenix-case-builder.netlify.app
-          MODE: ${{ inputs.mode }}
-          MODEL: ${{ inputs.model }}
+          # Defaulted here as well as in the inputs: a push-triggered run has no
+          # inputs at all, and the first probe silently sent mode="" — which the
+          # server reads as chat, not scan. A diagnostic that quietly tests the
+          # wrong thing is worse than none.
+          MODE: ${{ inputs.mode || 'scan' }}
+          MODEL: ${{ inputs.model || 'claude-opus-5' }}
         run: |
           set -u
 
-          # A small but real document, in the shape a scan part carries.
+          # Ten planted items, buried in ordinary logistics at about the density
+          # they occur in a real archive, and written the way people actually
+          # write them — obliquely, referring to things both parties already
+          # know. Nothing here is quotable as "he abused me"; that is the point.
+          # The catalog it returns can be graded against this list:
+          #
+          #   1 strangulation, referred to only as "hands on my neck"
+          #   2 threat to take the child
+          #   3 access to a weapon
+          #   4 real income, contradicting a claim of poverty
+          #   5 the girlfriend moving into the home, with a date
+          #   6 community money spent on the girlfriend's child
+          #   7 tracking her movements
+          #   8 her own contemporaneous fear
+          #   9 an admission that contradicts a 50/50 custody claim
+          #  10 isolation from her family
           python3 - <<'PY' > /tmp/body.json
           import json, os
-          lines = []
+          filler = [
+              "can you grab milk",
+              "running late",
+              "ok",
+              "she has soccer at 6",
+              "did you pay the water bill",
+              "k",
+              "I'll be home after 9",
+              "don't forget her inhaler",
+          ]
+          planted = [
+              ("2024-03-02 23:41", "Jackson", "you know I could put my hands on your neck again if you keep this up"),
+              ("2024-03-09 19:12", "Jackson", "keep talking about lawyers and you will not see Emma again, I promise you that"),
+              ("2024-03-15 21:03", "Jackson", "the thing in the closet is loaded now so think twice"),
+              ("2024-03-21 12:44", "Jackson", "cleared 4200 cash on the side job this month, dont tell anyone"),
+              ("2024-03-28 17:30", "Jackson", "Cadence is moving in on the 3rd, get your stuff out of the closet"),
+              ("2024-04-04 14:02", "Jackson", "paid Cadence's girl's daycare again, thats 900 gone, so no I cant do your car"),
+              ("2024-04-08 22:15", "Jackson", "I know you were at your sisters till 8:40, dont lie to me"),
+              ("2024-04-11 02:07", "Me", "I'm sitting in the bathroom with the door locked because I'm scared"),
+              ("2024-04-16 08:22", "Jackson", "I cant take her Wednesdays or Thursdays, I work late, thats on you"),
+              ("2024-04-19 20:55", "Jackson", "your mother is not welcome here again and I mean it this time"),
+          ]
+          lines, p = [], 0
           for d in range(1, 21):
-              lines.append(f"2024-04-{d:02d} 21:1{d%10} Jackson: if you take her to your mother's again I will come and get her myself")
-              lines.append(f"2024-04-{d:02d} 21:2{d%10} Me: please stop, you're scaring me")
+              for h in (8, 13, 18):
+                  lines.append(f"2024-04-{d:02d} {h:02d}:0{d%10} Me: {filler[(d+h) % len(filler)]}")
+                  lines.append(f"2024-04-{d:02d} {h:02d}:1{d%10} Jackson: {filler[(d+h+3) % len(filler)]}")
+              if p < len(planted) and d % 2 == 0:
+                  ts, who, msg = planted[p]
+                  lines.append(f"{ts} {who}: {msg}")
+                  p += 1
           doc = "\n".join(lines)
           body = {
             "mode": os.environ["MODE"],
@@ -81,12 +127,44 @@ jobs:
             "$URL/api/advocate" || echo "000")
           echo "HTTP $code"
           echo "bytes returned: $(wc -c < /tmp/out.txt)"
-          echo "--- first 600 bytes of the reply ---"
-          head -c 600 /tmp/out.txt
+          echo "--- the reply, in full ---"
+          cat /tmp/out.txt
           echo
-          echo "--- last 200 bytes ---"
-          tail -c 200 /tmp/out.txt
-          echo
+          echo "--- graded against the ten planted items ---"
+          python3 - <<'PY'
+          import json, re
+          raw = open("/tmp/out.txt", encoding="utf-8", errors="replace").read().replace("\x04", "")
+          start = raw.find("{")
+          if start < 0:
+              print("NOT A CATALOG — the endpoint returned prose or an error, not JSON.")
+              raise SystemExit(0)
+          try:
+              obj = json.loads(raw[start:])
+          except Exception as e:
+              print("catalog did not parse:", e)
+              raise SystemExit(0)
+          for k in ("incidents", "flaggedMessages", "riskIndicators", "caseFacts", "impliedFindings"):
+              print(f"{k}: {len(obj.get(k) or [])}")
+          blob = json.dumps(obj).lower()
+          checks = {
+              "1 strangulation": "neck",
+              "2 threat to take the child": "emma",
+              "3 weapon": "loaded",
+              "4 cash income": "4200",
+              "5 girlfriend moved in": "cadence is moving in",
+              "6 money spent on her child": "900",
+              "7 tracking her": "8:40",
+              "8 her own fear": "locked",
+              "9 contradicts 50/50": "wednesday",
+              "10 isolation": "mother is not welcome",
+          }
+          found = 0
+          for label, needle in checks.items():
+              hit = needle in blob
+              found += hit
+              print(("  FOUND   " if hit else "  MISSED  ") + label)
+          print(f"\nscore: {found}/10 planted items quoted back")
+          PY
           # the DONE byte (0x04) is the marker the server appends on a clean finish. Its
           # absence means the stream died rather than ended.
           if grep -qP '\x04' /tmp/out.txt; then
