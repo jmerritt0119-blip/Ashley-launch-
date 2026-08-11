@@ -8,7 +8,11 @@ import { decryptJson, encryptJson } from "./crypto";
 
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no I/O/0/1 — she may read this aloud
 
-/** 128 bits of randomness, grouped so it can be copied by hand without errors. */
+/**
+ * 16 characters from a 32-letter alphabet — 80 bits — grouped so it can be
+ * copied by hand without errors. (Not 128: each random byte is reduced to one
+ * of 32 characters. 80 bits is still ~10^24 guesses, far beyond enumerable.)
+ */
 export function makeVaultCode(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
@@ -155,8 +159,17 @@ export async function recoverPassphrase(code: string, recoveryKey: string): Prom
       "This vault was saved without a Recovery Kit, so the passphrase can't be recovered. If you still know it, use it — then save again to create a kit."
     );
   }
+  // The kit prints "cedar-harbor-mica-…", but she will be typing this off
+  // paper, under stress, possibly having it read to her over the phone. Spaces,
+  // commas, line breaks and doubled hyphens between the words must all count as
+  // the hyphen the kit meant — the words are the key, not the punctuation.
+  const normalizedKey = recoveryKey
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z]+/g, "-")
+    .replace(/^-|-$/g, "");
   try {
-    const opened = await decryptJson(envelope.escrow, recoveryKey.trim().toLowerCase());
+    const opened = await decryptJson(envelope.escrow, normalizedKey);
     if (!opened?.passphrase) throw new Error("bad escrow");
     return opened.passphrase as string;
   } catch {
