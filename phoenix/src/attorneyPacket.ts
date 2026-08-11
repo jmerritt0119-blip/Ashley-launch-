@@ -731,6 +731,7 @@ body{margin:0;color:#111;background:#fff;font:15px/1.55 Georgia,'Times New Roman
 .wrap{max-width:760px;margin:0 auto;padding:24px 20px 60px}
 .bar{position:sticky;top:0;background:#1a1720;color:#fff;padding:12px 16px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
 .bar button{background:#fff;color:#111;border:0;border-radius:6px;padding:10px 18px;font-size:1rem;font-weight:700;cursor:pointer}
+.bar button.alt{background:transparent;color:#fff;border:1px solid #fff}
 .bar span{font-size:.88rem;opacity:.9}
 header{border-bottom:3px double #111;padding-bottom:14px;margin-bottom:6px}
 h1{font-size:1.55rem;margin:0 0 4px}
@@ -755,7 +756,8 @@ pre{font-size:.8rem;white-space:pre-wrap;color:#444}
 </style></head><body>
 <div class="bar">
   <button onclick="window.print()">Save as PDF</button>
-  <span>This opens your device's print screen — choose <b>"Save as PDF"</b> as the printer. Nothing is sent anywhere.</span>
+  <button class="alt" id="dl">Download this report</button>
+  <span>PDF opens your device's print screen — choose <b>"Save as PDF"</b> as the printer. Download saves this page as a file that opens in any browser. Nothing is sent anywhere.</span>
 </div>
 <div class="wrap">
 <header>
@@ -773,5 +775,22 @@ ${bands || "<p>(Nothing rated or flagged yet.)</p>"}
 
 <h2 style="margin-top:30px;border-top:1px solid #111;padding-top:14px;font-size:1.05rem">How the numbering works</h2>
 <pre>${esc(REF_KEY)}</pre>
-</div></body></html>`;
+</div>
+<script>
+// One tap -> a file in Downloads. The page saves itself, so what she keeps is
+// exactly what she is looking at; it opens in any browser and prints the same.
+document.getElementById('dl').addEventListener('click', function(){
+  var blob = new Blob(['<!doctype html>\\n' + document.documentElement.outerHTML], {type:'text/html'});
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'Severity report${
+    // Stripped to [word, space, dot, hyphen] so the name can neither break out
+    // of this JS string nor produce an invalid filename on any platform.
+    name ? " - " + name.replace(/[^\w .-]/g, "") : ""
+  }.html';
+  a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); }, 60000);
+});
+</script>
+</body></html>`;
 }
