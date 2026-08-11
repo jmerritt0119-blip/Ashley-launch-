@@ -341,6 +341,49 @@ const esc = (s: string) =>
  * Every value is HTML-escaped. The content is her ex-partner's words, and they
  * will be opened on someone else's machine — nothing in here may execute.
  */
+/**
+ * How serious an entry is, on one scale, so counsel can sort to the worst.
+ *
+ * Only an incident carries a rating she gave it herself, and only those show
+ * stars. Everything else still has to take a position in a "most serious
+ * first" list, so it gets one by rule — stated on the page rather than
+ * implied, because an unexplained number on a document going to a lawyer is
+ * worse than no number at all.
+ *
+ * Module scope on purpose: the interactive case file and the printed severity
+ * report both order by these. Two copies of a ranking rule is how the same
+ * entry ends up "5 of 5" in one exhibit and "4 of 5" in another — on paper, in
+ * front of a judge.
+ */
+const TAG_RANK: Record<string, number> = {
+  threat: 5,
+  admission: 4,
+  harassment: 4,
+  monitoring: 4,
+  control: 3,
+  "custody / children": 3,
+  financial: 3,
+  "apology-cycle": 2,
+};
+
+/** A flagged message ranks by the worst thing it was flagged for. */
+const msgRank = (tags: string[] | undefined) =>
+  tags?.length ? Math.max(...tags.map((t) => TAG_RANK[t] ?? 3)) : 3;
+
+/** A breach of a standing order is independently actionable; worse with a child there. */
+const vioRank = (childPresent: boolean) => (childPresent ? 5 : 4);
+
+/** The sentence both documents print beside the ordering, so the rule is never implicit. */
+const RANK_EXPLANATION =
+  'an <strong>order violation</strong> ranks 4 of 5, or 5 with a child present, because a breach is independently actionable whatever it consisted of; a <strong>flagged message</strong> ranks by what it was flagged for, taking its worst tag (threat 5; admission, harassment, monitoring 4; control, financial, custody 3; apology-cycle 2)';
+
+const stars = (n: number) => "★".repeat(n) + "☆".repeat(Math.max(0, 5 - n));
+
+/** Worst first; inside a severity the most recent first; stable on total ties. */
+const bySeverity = <T extends { sev: number; date: string; time: string }>(a: T, b: T) =>
+  b.sev - a.sev ||
+  (`${a.date} ${a.time}` < `${b.date} ${b.time}` ? 1 : `${a.date} ${a.time}` > `${b.date} ${b.time}` ? -1 : 0);
+
 export async function buildCaseIndexHtml(name: string, county: string): Promise<string> {
   const [incidents, messages, journal, violations, evidence, imports] = await Promise.all([
     db.incidents.orderBy("date").toArray(),
@@ -351,26 +394,6 @@ export async function buildCaseIndexHtml(name: string, county: string): Promise<
     db.imports.orderBy("createdAt").toArray(),
   ]);
   const s = await packetStats();
-
-  /**
-   * How serious an entry is, on one scale, so counsel can sort to the worst.
-   *
-   * Only an incident carries a rating she gave it herself, and only those show
-   * stars. Everything else still has to take a position in a "most serious
-   * first" list, so it gets one by rule — stated on the page rather than
-   * implied, because an unexplained number on a document going to a lawyer is
-   * worse than no number at all.
-   */
-  const TAG_RANK: Record<string, number> = {
-    threat: 5,
-    admission: 4,
-    harassment: 4,
-    monitoring: 4,
-    control: 3,
-    "custody / children": 3,
-    financial: 3,
-    "apology-cycle": 2,
-  };
 
   type Item = {
     date: string; time: string; kind: string; ref: string; title: string; body: string; meta: string;
@@ -399,10 +422,7 @@ export async function buildCaseIndexHtml(name: string, county: string): Promise<
     items.push({
       date: (m.date || "").slice(0, 10), time: m.time || "", kind: "Message", ref: refMsg(m.id),
       title: `from ${m.sender}`, body: m.text, meta: (m.tags || []).join(", "),
-      // What it was flagged for is the only signal a message carries. A threat
-      // outranks an apology; taking the highest means a message tagged both is
-      // ranked by its worst element, which is how it would be read in court.
-      sev: (m.tags || []).length ? Math.max(...m.tags.map((t) => TAG_RANK[t] ?? 3)) : 3,
+      sev: msgRank(m.tags),
       rated: false,
     });
 
@@ -419,10 +439,7 @@ export async function buildCaseIndexHtml(name: string, county: string): Promise<
     items.push({
       date: v.date, time: v.time || "", kind: "Violation", ref: refVio(v.id), title: v.type,
       body: v.description,
-      // A breach of a standing order is independently actionable, so it ranks
-      // with the most serious entries whatever it consisted of. With a child
-      // present it is the top of the scale.
-      sev: v.childPresent ? 5 : 4, rated: false,
+      sev: vioRank(v.childPresent), rated: false,
       meta: [v.orderName, v.provision, v.childPresent ? "child present" : "", v.reported ? `reported: ${v.reported}` : ""]
         .filter(Boolean).join(" · "),
     });
@@ -436,8 +453,6 @@ export async function buildCaseIndexHtml(name: string, county: string): Promise<
     });
 
   items.sort((a, b) => `${a.date} ${a.time}` < `${b.date} ${b.time}` ? -1 : 1);
-
-  const stars = (n: number) => "★".repeat(n) + "☆".repeat(Math.max(0, 5 - n));
 
   const rows = items
     .map(
@@ -530,7 +545,7 @@ h2.sec{margin:34px 0 4px;padding-top:20px;border-top:1px solid var(--line);font-
 <div class="note">
   <h2>How "most serious first" is ordered</h2>
   <p style="margin:0 0 8px">Stars appear on incidents only, and are the <strong>client's own severity rating</strong> — 1 to 5, as she recorded it. No rating here is an assessment by this software or by anyone else.</p>
-  <p style="margin:0">Entries with no rating still have to take a place in the list, so they take one by a fixed rule, stated here rather than hidden: an <strong>order violation</strong> ranks 4 of 5, or 5 with a child present, because a breach is independently actionable whatever it consisted of; a <strong>flagged message</strong> ranks by what it was flagged for, taking its worst tag (threat 5; admission, harassment, monitoring 4; control, financial, custody 3; apology-cycle 2); <strong>evidence</strong> 3, since its weight comes from what it shows; a <strong>journal entry</strong> 2, being context rather than an event. Sort by date to read the record as a chronology.</p>
+  <p style="margin:0">Entries with no rating still have to take a place in the list, so they take one by a fixed rule, stated here rather than hidden: ${RANK_EXPLANATION}; <strong>evidence</strong> 3, since its weight comes from what it shows; a <strong>journal entry</strong> 2, being context rather than an event. Sort by date to read the record as a chronology.</p>
 </div>
 
 <div class="controls">
@@ -616,5 +631,147 @@ ${rows || "<p>(Nothing on record yet.)</p>"}
   sort(); run();
 })();
 </script>
+</div></body></html>`;
+}
+
+/**
+ * The severity report: the record sorted worst first, on paper.
+ *
+ * The interactive case file is for working; this is for handing across a
+ * table. It is built to be printed — the browser's own "Save as PDF" turns it
+ * into a real PDF on any phone or laptop, with nothing to install and nothing
+ * sent anywhere — and every entry carries the same fixed reference number as
+ * the full case file and the spreadsheets, so a line in this document can be
+ * traced to its source row in ten seconds.
+ *
+ * Only what someone judged serious appears here: her incidents with her own
+ * star rating, the messages flagged in the archive, and order violations.
+ * Journal context and evidence listings belong to the full file.
+ *
+ * Ordered by the SAME shared rules as the case file (TAG_RANK / msgRank /
+ * vioRank / bySeverity), so the two documents can never disagree about how
+ * serious the same entry is.
+ */
+export async function buildSeverityReportHtml(name: string, county: string): Promise<string> {
+  const [incidents, messages, violations] = await Promise.all([
+    db.incidents.toArray(),
+    db.messages.filter((m) => m.starred).toArray(),
+    db.violations.toArray(),
+  ]);
+
+  type Row = {
+    date: string; time: string; kind: string; ref: string; title: string;
+    body: string; meta: string; sev: number; rated: boolean;
+  };
+  const rows: Row[] = [];
+
+  for (const i of incidents)
+    rows.push({
+      date: i.date, time: i.time || "", kind: "Incident", ref: refInc(i.id),
+      title: i.title, body: i.narrative, sev: i.severity, rated: true,
+      meta: [
+        i.categories.join(", "),
+        i.childrenPresent ? "child present" : "", i.location ? `at ${i.location}` : "",
+        i.witnesses ? `witness: ${i.witnesses}` : "",
+        i.policeReport ? `police report ${i.policeReport}` : "",
+        i.medical ? `medical: ${i.medical}` : "",
+      ].filter(Boolean).join(" · "),
+    });
+
+  for (const m of messages)
+    rows.push({
+      date: (m.date || "").slice(0, 10), time: m.time || "", kind: "Message",
+      ref: refMsg(m.id), title: `from ${m.sender}`, body: m.text,
+      sev: msgRank(m.tags), rated: false, meta: (m.tags || []).join(", "),
+    });
+
+  for (const v of violations)
+    rows.push({
+      date: v.date, time: v.time || "", kind: "Violation", ref: refVio(v.id),
+      title: v.type, body: v.description, sev: vioRank(v.childPresent), rated: false,
+      meta: [v.orderName, v.provision, v.childPresent ? "child present" : "",
+        v.reported ? `reported: ${v.reported}` : ""].filter(Boolean).join(" · "),
+    });
+
+  rows.sort(bySeverity);
+
+  const bands = [5, 4, 3, 2, 1].map((sev) => {
+    const inBand = rows.filter((r) => r.sev === sev);
+    if (!inBand.length) return "";
+    const cards = inBand
+      .map(
+        (r) => `<article class="e">
+  <div class="h"><span class="ref">${esc(r.ref)}</span><time>${esc(r.date)}${r.time ? " " + esc(r.time) : ""}</time>${
+    r.rated ? `<span class="stars">${stars(r.sev)}</span>` : `<span class="rank">ranked ${r.sev} of 5</span>`
+  }<span class="k">${esc(r.kind)}</span></div>
+  <h3>${esc(r.title)}</h3>
+  ${r.body ? `<p>${esc(r.body)}</p>` : ""}
+  ${r.meta ? `<p class="m">${esc(r.meta)}</p>` : ""}
+</article>`
+      )
+      .join("\n");
+    return `<section class="band">
+<h2>Severity ${sev} of 5 <span class="n">— ${inBand.length} ${inBand.length === 1 ? "entry" : "entries"}</span></h2>
+${cards}
+</section>`;
+  }).join("\n");
+
+  const counts = {
+    inc: incidents.length,
+    msg: messages.length,
+    vio: violations.length,
+  };
+
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Severity report${name ? " — " + esc(name) : ""}</title>
+<style>
+body{margin:0;color:#111;background:#fff;font:15px/1.55 Georgia,'Times New Roman',serif}
+.wrap{max-width:760px;margin:0 auto;padding:24px 20px 60px}
+.bar{position:sticky;top:0;background:#1a1720;color:#fff;padding:12px 16px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.bar button{background:#fff;color:#111;border:0;border-radius:6px;padding:10px 18px;font-size:1rem;font-weight:700;cursor:pointer}
+.bar span{font-size:.88rem;opacity:.9}
+header{border-bottom:3px double #111;padding-bottom:14px;margin-bottom:6px}
+h1{font-size:1.55rem;margin:0 0 4px}
+.sub{color:#555;font-size:.9rem}
+.note{border:1px solid #bbb;border-left:4px solid #111;padding:12px 14px;margin:16px 0;font-size:.88rem}
+.note h2{margin:0 0 6px;font-size:.98rem}
+.band{margin-top:26px}
+.band>h2{font-size:1.12rem;border-bottom:1px solid #111;padding-bottom:4px}
+.band .n{font-weight:400;color:#555;font-size:.85rem}
+.e{border:1px solid #ccc;border-radius:6px;padding:12px 14px;margin:10px 0;break-inside:avoid}
+.h{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;font-size:.78rem;color:#555}
+.ref{font-family:ui-monospace,Menlo,monospace;font-weight:700;color:#111}
+.stars{color:#8a1c1c;font-size:.95rem;letter-spacing:1px}
+.rank{font-style:italic}
+.k{margin-left:auto;text-transform:uppercase;letter-spacing:.05em;font-size:.68rem}
+.e h3{margin:5px 0;font-size:1rem}
+.e p{margin:5px 0;white-space:pre-wrap}
+.e .m{color:#555;font-size:.82rem}
+pre{font-size:.8rem;white-space:pre-wrap;color:#444}
+@page{margin:18mm 15mm}
+@media print{.bar{display:none}body{font-size:12.5px}}
+</style></head><body>
+<div class="bar">
+  <button onclick="window.print()">Save as PDF</button>
+  <span>This opens your device's print screen — choose <b>"Save as PDF"</b> as the printer. Nothing is sent anywhere.</span>
+</div>
+<div class="wrap">
+<header>
+  <h1>Severity report${name ? " — " + esc(name) : ""}</h1>
+  <div class="sub">${county ? esc(county) + " County, Texas · " : ""}prepared ${esc(new Date().toLocaleDateString())} · ${counts.inc} incidents, ${counts.msg} flagged messages, ${counts.vio} order violations · sorted most serious first</div>
+</header>
+
+<div class="note">
+  <h2>How this document is ordered</h2>
+  <p style="margin:0 0 6px">Stars appear on incidents only, and are the <strong>client's own severity rating</strong> — 1 to 5, as she recorded it. No rating in this document is an assessment by software or by anyone else.</p>
+  <p style="margin:0">Unrated entries take their place by a fixed rule: ${RANK_EXPLANATION}. Within a band, the most recent comes first. Every reference number below matches the full case file and the spreadsheet exports, so any line here can be traced to its source record.</p>
+</div>
+
+${bands || "<p>(Nothing rated or flagged yet.)</p>"}
+
+<h2 style="margin-top:30px;border-top:1px solid #111;padding-top:14px;font-size:1.05rem">How the numbering works</h2>
+<pre>${esc(REF_KEY)}</pre>
 </div></body></html>`;
 }
