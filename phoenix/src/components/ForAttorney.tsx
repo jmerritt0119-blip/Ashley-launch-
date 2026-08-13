@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import { attorneyEmailText, buildCaseIndexHtml, packetStats, type PacketStats } from "../attorneyPacket";
+import {
+  attorneyEmailText,
+  buildCaseIndexHtml,
+  buildSeverityReportHtml,
+  packetStats,
+  type PacketStats,
+} from "../attorneyPacket";
 import { exportEverythingZip } from "../exportCsv";
 import { usePaneActive } from "../paneContext";
 import type { Settings } from "../settings";
@@ -50,11 +56,23 @@ export default function ForAttorney({ settings }: { settings: Settings }) {
     }
   };
 
-  const preview = async () => {
-    const html = await buildCaseIndexHtml(settings.displayName, settings.county);
+  const openDoc = (html: string) => {
     const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
     window.open(url, "_blank", "noopener");
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  };
+
+  const preview = async () => {
+    openDoc(await buildCaseIndexHtml(settings.displayName, settings.county));
+  };
+
+  /**
+   * The record sorted worst first, as a PDF, for the hearing folder.
+   * The document carries its own "Save as PDF" button — the browser's print
+   * dialog produces a real PDF on any device, and nothing leaves it.
+   */
+  const severityPdf = async () => {
+    openDoc(await buildSeverityReportHtml(settings.displayName, settings.county));
   };
 
   const email = stats ? attorneyEmailText(settings.displayName, stats) : "";
@@ -85,13 +103,18 @@ export default function ForAttorney({ settings }: { settings: Settings }) {
             {stats.earliest ? ` · ${stats.earliest} to ${stats.latest}` : ""}
           </p>
         )}
-        <div style={{ marginTop: 12 }}>
+        <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
           <button className="btn secondary" onClick={() => void preview()}>
             See exactly what they'll get
           </button>
+          <button className="btn secondary" onClick={() => void severityPdf()}>
+            The worst of it, as a PDF
+          </button>
         </div>
         <p className="muted small" style={{ marginBottom: 0, marginTop: 8 }}>
-          Opens in a new tab. Nothing is sent anywhere — it's built on this device.
+          Both open in a new tab. Nothing is sent anywhere — they're built on this device. The PDF
+          is every rated incident, flagged message and violation, worst first, each with the
+          reference number that ties it back to the full record.
         </p>
       </div>
 

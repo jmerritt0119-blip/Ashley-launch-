@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { db } from "./db";
 import { ADVOCATE_SYSTEM } from "./advocatePrompt";
+import { SCAN_CACHE_BREAK } from "./scan";
 
 export { ADVOCATE_SYSTEM };
 
@@ -63,6 +64,13 @@ export const QUICK_ACTIONS: { label: string; prompt: string }[] = [
  * to be invisible.
  */
 const DONE_MARK = "\u0004";
+/**
+ * Sent by the server while the model is still thinking, so the platform sees a
+ * response already in progress and does not time the request out before the
+ * first real character arrives. Stripped in the read loop below; nothing
+ * downstream — least of all the JSON parser — ever sees it.
+ */
+const BEAT_MARK = "\u0006";
 
 const trunc = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "…" : s);
 
@@ -296,6 +304,19 @@ async function viaServer(opts: AdvocateOpts): Promise<string> {
     if (done) break;
     let text = decoder.decode(value, { stream: true });
     if (!text) continue;
+    // Heartbeat bytes are stripped before anything else sees them.
+    //
+    // The server sends one the instant a request starts, and keeps sending
+    // them while the model is still thinking, purely so the platform sees a
+    // response in progress. Without that, a scan part spends so long reading
+    // 8,000 tokens of instructions plus her messages before it emits its first
+    // character that the gateway gives up and returns 504 — which is the
+    // failure that has been shrinking part sizes all day.
+    //
+    // They must never reach the caller: a scan reply is parsed as JSON, and a
+    // stray control character in the middle of it is a parse error.
+    if (text.includes(BEAT_MARK)) text = text.split(BEAT_MARK).join("");
+    if (!text) continue;
     // The server marks a deliberate ending with a single control character.
     // Its absence means the connection died mid-answer.
     const cut = text.indexOf(DONE_MARK);
@@ -328,6 +349,24 @@ async function viaServer(opts: AdvocateOpts): Promise<string> {
   return full;
 }
 
+/**
+ * Cuts a message at the cache marker so the unchanging half is billed at cache
+ * rates. Text without the marker is returned exactly as it came in, so chat and
+ * every other caller are untouched.
+ */
+function withCacheBreak(text: string): any {
+  const at = text.indexOf(SCAN_CACHE_BREAK);
+  if (at < 0) return text;
+  return [
+    {
+      type: "text",
+      text: text.slice(0, at),
+      cache_control: { type: "ephemeral" },
+    },
+    { type: "text", text: text.slice(at + SCAN_CACHE_BREAK.length) },
+  ];
+}
+
 async function viaDirect(opts: AdvocateOpts): Promise<string> {
   const client = new Anthropic({
     apiKey: opts.apiKey,
@@ -345,15 +384,38 @@ async function viaDirect(opts: AdvocateOpts): Promise<string> {
     });
   }
 
+  const isScan = opts.mode === "scan";
   const params: any = {
     model: opts.model,
-    // Per mode, for the same reason as the server: Deep Scan runs many parts
-    // in sequence and only finishes at "high". xhigh killed a 63-part scan.
-    max_tokens: opts.mode === "scan" ? 24000 : 32000,
+    // This route has no wall, so it does not wear the wall's ceiling.
+    //
+    // A scan sent through the site goes via a serverless function that the
+    // platform kills at sixty seconds — measured on the live endpoint, not
+    // assumed — so that path is capped at 3,000 tokens, about what Opus can
+    // write in a minute. THIS function is the other route: the browser talking
+    // straight to Anthropic, with no function in the middle and nothing to time
+    // it out. Carrying the same 3,000 here truncated catalogs for a limit that
+    // was never in the way, on exactly the dense parts that matter most.
+    //
+    // 16,000 is a ceiling, not a target: it costs nothing unless a part has
+    // that much to say, and a part that hits it is still split and re-read
+    // rather than silently trimmed.
+    max_tokens: isScan ? 16000 : 32000,
     system,
-    messages: opts.history.map((t) => ({ role: t.role, content: t.content })),
-    thinking: { type: "adaptive" },
-    output_config: { effort: opts.mode === "scan" ? "medium" : "xhigh" },
+    // Same cache split the site's function makes, so a scan run on her own key
+    // is billed the same way as one run through the site — the instructions in
+    // front of every part are read from cache instead of paid for 59 times.
+    messages: opts.history.map((t) => ({ role: t.role, content: withCacheBreak(t.content) })),
+    // Deep Scan is set up exactly as the server sets it up, so a scan run on
+    // her own API key catalogs the same way as one run through the site.
+    //
+    // It used to differ on both counts here: extended thinking stayed on, and
+    // effort was pinned down to "medium" as part of the change that also moved
+    // scans off Opus for cost. Thinking off is what makes each part start
+    // streaming immediately and finish inside the platform's limit; leaving the
+    // effort unpinned lets the model bring its full weight to the judgement
+    // calls, which on this document is the whole job.
+    ...(isScan ? {} : { thinking: { type: "adaptive" }, output_config: { effort: "xhigh" } }),
     ...(opts.webSearch === true
       ? { tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 8 }] }
       : {}),

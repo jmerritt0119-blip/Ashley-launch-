@@ -36,11 +36,33 @@ export default async (req) => {
     return new Response('Malformed request.', { status: 400 });
   }
 
+  // Where the caller has marked the boundary between the instructions that
+  // never change and the messages that do, cut there and cache the first half.
+  //
+  // A Deep Scan sends ~29,000 characters of identical instructions in front of
+  // every part — 59 times for her archive, at full price each time, for text
+  // the model was handed thirty seconds earlier. Cached, those reads cost a
+  // tenth as much. The marker itself is a split point and is discarded, so the
+  // model sees exactly what it saw before, and a request without one is passed
+  // through untouched.
+  const CACHE_BREAK = '\n<<<PHOENIX-CACHE-BREAK>>>\n';
+  const asContent = (text) => {
+    const at = text.indexOf(CACHE_BREAK);
+    if (at < 0) return text;
+    const stable = text.slice(0, at);
+    const rest = text.slice(at + CACHE_BREAK.length);
+    return [
+      { type: 'text', text: stable, cache_control: { type: 'ephemeral' } },
+      { type: 'text', text: rest },
+    ];
+  };
+
   const incoming = Array.isArray(body?.messages) ? body.messages : [];
   const messages = incoming
     .filter((m) => m && (m.role === 'user' || m.role === 'assistant'))
     .map((m) => ({ role: m.role, content: String(m.content ?? '').slice(0, 200000) }))
-    .filter((m) => m.content.trim().length > 0);
+    .filter((m) => m.content.trim().length > 0)
+    .map((m) => ({ role: m.role, content: asContent(m.content) }));
   if (messages.length === 0) return new Response('There was nothing to respond to.', { status: 400 });
 
   const model = ALLOWED_MODELS.has(body?.model) ? body.model : DEFAULT_MODEL;
@@ -100,11 +122,36 @@ export default async (req) => {
   // indistinguishable from one that ended — which is exactly how she was shown
   // "Good. Now here is the answer." and then nothing at all.
   const DONE = '\u0004';
+  // Keeps the response alive while the model is still reading.
+  //
+  // The platform needs to see a response START soon after the request
+  // arrives. A scan part carries ~8,000 tokens of instructions plus her
+  // messages, and Opus spends long enough reading that before it emits its
+  // first character that the gateway gives up — a 504, which is the failure
+  // that has driven part sizes down from 60,000 characters to 16,000 today
+  // without ever fixing the cause.
+  //
+  // One byte, sent the instant the stream opens and repeated every few
+  // seconds until real text arrives, means the response is already in
+  // progress and the model can take as long as it needs. The client strips
+  // these before anything — above all the JSON parser — sees them.
+  const BEAT = '\u0006';
 
   const stream = new ReadableStream({
     async start(controller) {
       let emitted = false;
       let searching = false;
+      // Immediately, before a single token has been read.
+      controller.enqueue(encoder.encode(BEAT));
+      const beat = setInterval(() => {
+        if (emitted) return;
+        try {
+          controller.enqueue(encoder.encode(BEAT));
+        } catch {
+          /* stream already closed */
+        }
+      }, 3000);
+      const stopBeat = () => clearInterval(beat);
 
       const runOnce = (withFallbacks, convo) =>
         new Promise((resolve, reject) => {
@@ -137,7 +184,22 @@ export default async (req) => {
           // and the function runtime Netlify charges for.
           const params = {
             model,
-            max_tokens: isChat ? 32000 : 16000,
+            // Chat and scan do NOT get the same ceiling, and conflating them
+            // is what produced 504s on her first real run of the day.
+            //
+            // Raising a ceiling is only free if nothing is timed. This function
+            // is timed: the platform kills it at a fixed wall-clock limit, and
+            // #52 established on her own archive that what decides whether a
+            // part survives is how much JSON it has to write. A generous
+            // ceiling on a dense part is therefore not headroom, it is rope —
+            // and the parts dense enough to use it are her worst weeks, the
+            // evidence that matters most.
+            //
+            // Chat keeps 32,000: one answer, and a custody question spends most
+            // of its budget thinking. Scan gets 10,000, below the 16,000 that
+            // was surviving on Sonnet, because Opus writes the same catalog
+            // more slowly and the limit is wall-clock, not tokens.
+            max_tokens: isChat ? 32000 : 3000,
             system,
             messages: convo,
             ...(isChat ? { thinking: { type: 'adaptive' } } : {}),
@@ -210,9 +272,11 @@ export default async (req) => {
         if (isChat && (finalMsg?.stop_reason === 'max_tokens' || finalMsg?.stop_reason === 'pause_turn')) {
           controller.enqueue(encoder.encode('\n\n' + CUT_SHORT));
         }
+        stopBeat();
         controller.enqueue(encoder.encode(DONE));
         controller.close();
       } catch (err) {
+        stopBeat();
         const status = err?.status;
         const raw = (err?.error?.error?.message || err?.error?.message || err?.message || '').toString();
         const low = raw.toLowerCase();
@@ -223,6 +287,14 @@ export default async (req) => {
           message = 'The Anthropic account is out of credit. Add billing credit in the Anthropic console, then try again.';
         } else if (status === 404 || (low.includes('model') && (low.includes('not') || low.includes('found')))) {
           message = `That model is not available on this account. Try switching models in Settings. ${raw.slice(0, 120)}`;
+        } else if (low.includes('usage limit') || low.includes('spend limit') || low.includes('regain access')) {
+          // Distinct from both rate limiting and running out of credit: a
+          // ceiling somebody configured on the account, which does not clear
+          // by waiting a moment or by adding money. Kept explicit so whoever
+          // runs this site can see the real reason in the deploy check and the
+          // function logs. The app never shows this sentence to her — the
+          // client treats it as fatal and renders a neutral message instead.
+          message = `The account's configured API usage limit has been reached. Raise the limit in the Anthropic console — adding credit alone will not clear it. ${raw.slice(0, 120)}`;
         } else if (status === 429) {
           message = 'Rate limited at the moment — a short pause should clear it.';
         } else if (status === 529 || status === 500) {

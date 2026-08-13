@@ -1,22 +1,57 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { addMessagesDeduped, db } from "../db";
+import { addMessagesDeduped, db, isTimestampOnly } from "../db";
 import { streamAdvocate } from "../claude";
 import { handoff } from "../handoff";
 import {
   buildScanPrompt,
   chunkScanInput,
+  estimateScanTime,
   mergeScanResults,
   parseScanResult,
-  SCAN_CHUNK_SIZE,
+  scanChunkSize,
   SCAN_MODEL,
   SCANNER_VERSION,
   type ScanResult,
 } from "../scan";
+import {
+  analysisAsText,
+  buildSynthesisPrompt,
+  lethalityCount,
+  parseCaseAnalysis,
+  type CaseAnalysis,
+} from "../synthesis";
+import { takeSnapshot } from "../safety";
 import { readAnyFiles } from "../readAnyFile";
 import { messagesFromCsv, type ParsedMessage } from "../parseMessages";
 import type { Settings } from "../settings";
 import { recordImport, sha256Hex } from "../integrity";
+
+/**
+ * Is this actually a spreadsheet, or is it prose that happens to contain commas?
+ *
+ * It has to be a header row, and it has to name the column holding the message
+ * text. Without one, messagesFromCsv falls back to assuming the first three
+ * columns are date, sender and text — which is a reasonable guess for a real
+ * export and a catastrophic one for ordinary writing.
+ *
+ * "if the cops come here again, I'll tell them you hit me first, and who do you
+ * think they believe" contains two commas, so it was being read as three
+ * columns and filed as a message from a sender called "I'll tell them you hit
+ * me first" whose text was "and who do you think they believe". Her own words,
+ * cut into fragments and attributed to people who do not exist, in the archive
+ * that goes to her attorney.
+ *
+ * Requiring the header is the difference between recognising a file and
+ * guessing at one. A genuine phone export always carries it.
+ */
+function looksLikeCsvExport(doc: string): boolean {
+  const firstLine = doc.slice(0, 4000).split("\n")[0] || "";
+  if (!firstLine.includes(",")) return false;
+  const header = firstLine.toLowerCase();
+  // The same column the parser needs in order to know what the message is.
+  return /(^|,)\s*"?[^,"]*(text|body|message|content)[^,"]*"?\s*(,|$)/.test(header);
+}
 
 /**
  * A CSV export is imported by code, not by the AI: every row lands in the
@@ -24,8 +59,7 @@ import { recordImport, sha256Hex } from "../integrity";
  * only to flag and categorize — so a model mistake can never lose a message.
  */
 function detectCsvMessages(doc: string): ParsedMessage[] {
-  const head = doc.slice(0, 4000);
-  if (!head.includes(",")) return [];
+  if (!looksLikeCsvExport(doc)) return [];
   try {
     const rows = messagesFromCsv(doc);
     return rows.length >= 3 ? rows : [];
@@ -50,12 +84,83 @@ const today = () => new Date().toISOString().slice(0, 10);
  */
 const SCAN_STATE_KEY = "scanInProgress";
 
+/**
+ * The findings themselves, kept separately from the unfinished-scan state.
+ *
+ * They needed their own key because of the shape of the other one: the
+ * in-progress record is deliberately deleted the moment nothing is left to do,
+ * and it is only ever restored when parts remain. Both of those are right for
+ * resuming a scan and catastrophic for keeping a finished one. A scan that ran
+ * all the way to the end therefore wiped its own saved copy on the last batch
+ * and left the entire catalog in React state alone — so closing the tab,
+ * reloading, or a phone dropping a backgrounded page threw away every finding,
+ * silently, at the exact moment the scan had just succeeded.
+ *
+ * That is the one failure that looks identical to "the scan found nothing".
+ *
+ * Written after every batch and kept after the scan ends. Cleared only when she
+ * files the findings into her records, which is the one point where keeping
+ * them would risk adding the same incident twice.
+ */
+const SCAN_FINDINGS_KEY = "scanFindings";
+
+/**
+ * Is this a failure that trying again cannot fix?
+ *
+ * Every failed part costs five requests: three attempts, then the part is cut
+ * in half and both halves are tried. That is right for an overloaded model or
+ * a dropped connection, and pure waste for "the account is out of credit" —
+ * which will answer the same way every time, for every part, until somebody
+ * adds money. On a 47-part archive that difference is 235 pointless requests
+ * against 1.
+ *
+ * Matched against the server's own words, which are the plain-English messages
+ * the function produces for 401, 402 and 404 — not on status codes, because by
+ * the time the reply reaches here it is text.
+ */
+const isFatalScanError = (message: string) =>
+  // "usage limit" and "regain access" are here because of a real reply from the
+  // live endpoint: "You have reached your specified API usage limits. You will
+  // regain access on 2026-09-01." That is an account ceiling, not a shortage —
+  // no amount of retrying, splitting or waiting a few minutes touches it, and
+  // it does not contain any of the words this used to look for. Without a match
+  // it was treated as a transient failure: every part retried, every part
+  // split, every request billed, and the sentence itself — which is about
+  // somebody's account limits — rendered straight onto her screen.
+  /out of credit|billing|credit balance|authentication|api key|not available on this account|usage limit|regain access|quota/i.test(
+    message
+  );
+
 interface SavedScan {
   chunks: string[];
   remaining: number[];
   parts: ScanResult[];
   total: number;
   savedAt: number;
+}
+
+interface SavedFindings {
+  result: ScanResult;
+  savedAt: number;
+}
+
+async function saveFindings(v: SavedFindings | null): Promise<void> {
+  try {
+    if (v) await db.kv.put({ key: SCAN_FINDINGS_KEY, value: v });
+    else await db.kv.delete(SCAN_FINDINGS_KEY);
+  } catch {
+    /* a scan must never fail because progress could not be written */
+  }
+}
+
+async function loadFindings(): Promise<SavedFindings | null> {
+  try {
+    const row = await db.kv.get(SCAN_FINDINGS_KEY);
+    const v = row?.value as SavedFindings | undefined;
+    return v?.result ? v : null;
+  } catch {
+    return null;
+  }
 }
 
 async function saveScanState(v: SavedScan | null): Promise<void> {
@@ -111,12 +216,38 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
   // double tap can never file the same account twice.
   const savingImplied = useRef<Set<number>>(new Set());
   const [dismissed, setDismissed] = useState<Set<number>>(new Set());
+  /**
+   * The real reason a part failed, shown the moment it happens.
+   *
+   * It was already being captured — and then held back until the whole scan
+   * finished, behind a progress line that told her the part was "too big",
+   * which the code has no way of knowing. So she sat and watched eighty parts
+   * fail, one by one, being given a diagnosis that was a guess, while the
+   * actual sentence the server sent back was sitting in a variable.
+   *
+   * A scan that cannot work should say why in the first thirty seconds, not
+   * after twenty minutes and a hundred billed requests.
+   */
+  const [liveError, setLiveError] = useState<string | null>(null);
+  /**
+   * The whole-case analysis, and whether it is running.
+   *
+   * A separate step she starts herself rather than something the scan does
+   * automatically at the end, so that after a long scan she chooses when to
+   * read the analysis rather than having it appear unbidden.
+   */
+  const [analysis, setAnalysis] = useState<CaseAnalysis | null>(null);
+  const [analysing, setAnalysing] = useState(false);
   /** How far through the parts she is, and roughly how much longer. */
   const [pct, setPct] = useState<number | null>(null);
   const [eta, setEta] = useState("");
   /** Findings the merge dropped because an earlier part already had them. */
   const [dupes, setDupes] = useState(0);
   const [added, setAdded] = useState<string | null>(null);
+  // Ref blocks the double-press (state alone lags a render); state drives the
+  // button's "Adding…" label so a long filing is visibly working, not dead.
+  const committing = useRef(false);
+  const [isCommitting, setCommitting] = useState(false);
   const [remaining, setRemaining] = useState<number[]>([]);
   const [loadedNote, setLoadedNote] = useState<string | null>(null);
   const [archived, setArchived] = useState<number>(0);
@@ -124,6 +255,29 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
   const [senders, setSenders] = useState<{ name: string; count: number }[]>([]);
   /** How many messages she already has, so the re-scan button knows to appear. */
   const archivedCount = useLiveQuery(() => db.messages.count(), [], 0);
+  /**
+   * How many saved messages have a date where their words should be.
+   *
+   * Counted rather than assumed, because this decides whether she is shown a
+   * repair plan or left alone. Computed on demand instead of live: it reads
+   * every row, and on her archive that is 25,000 of them.
+   */
+  const [broken, setBroken] = useState<number | null>(null);
+  /** Set once she has cleared, so the steps keep guiding her to the end. */
+  const [repairing, setRepairing] = useState(false);
+  const countBroken = async () => {
+    try {
+      const rows = await db.messages.toArray();
+      setBroken(rows.reduce((n, m) => n + (isTimestampOnly(m.text || "") ? 1 : 0), 0));
+    } catch {
+      setBroken(null);
+    }
+  };
+  useEffect(() => {
+    void countBroken();
+    // Re-counted whenever the archive size changes — after an import, and
+    // after a clear.
+  }, [archivedCount]);
   const docRef = useRef<string>("");
   const fileRef = useRef<HTMLInputElement>(null);
   const shotRef = useRef<HTMLInputElement>(null);
@@ -132,7 +286,15 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
   const abortRef = useRef<AbortController | null>(null);
 
   const needsKey = settings.connection === "direct" && !settings.apiKey;
-  const estParts = Math.max(1, Math.ceil(text.trim().length / SCAN_CHUNK_SIZE));
+  // How wide a part may be depends on how this device reaches the model: a
+  // scan through the site is killed at sixty seconds, a scan on her own key is
+  // not, and the second can therefore read six times as much at once.
+  const partSize = scanChunkSize(settings.connection);
+  const estParts = Math.max(1, Math.ceil(text.trim().length / partSize));
+  const estimate = useMemo(
+    () => (text.trim().length > 0 ? estimateScanTime(text.trim().length, partSize) : null),
+    [text]
+  );
 
   /**
    * The facts list is the part an attorney can act on immediately, so it gets
@@ -301,9 +463,29 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
   };
 
   const applyMerged = (merged: ScanResult) => {
-    setResult(merged);
-    setPickedInc(new Set(merged.incidents.map((_, i) => i)));
-    setPickedMsg(new Set(merged.messages.map((_, i) => i)));
+    // Worst first, and sorted HERE rather than at render.
+    //
+    // The list is capped at 400 for page speed, and parts come back in
+    // whatever order they finish. Left in arrival order, a severity 5 found in
+    // part 200 can be pushed off the visible list by a hundred entries about
+    // scheduling — the most serious thing in her archive, invisible because of
+    // when it happened to be read.
+    //
+    // Sorting the canonical array rather than the rendered copy is deliberate:
+    // the checkboxes, the selected set and the filing step all address
+    // incidents by position, so ordering anywhere else would tick the wrong
+    // boxes and file the wrong entries.
+    const ranked: ScanResult = {
+      ...merged,
+      incidents: [...merged.incidents].sort(
+        (a, b) =>
+          (b.severity || 0) - (a.severity || 0) ||
+          (b.date || "").localeCompare(a.date || "")
+      ),
+    };
+    setResult(ranked);
+    setPickedInc(new Set(ranked.incidents.map((_, i) => i)));
+    setPickedMsg(new Set(ranked.messages.map((_, i) => i)));
   };
 
   // The home screen can hand a freshly uploaded file straight here — load it
@@ -325,25 +507,92 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
       void run(false, t);
       return;
     }
+    // An analysis she has already paid for comes back with everything else.
+    void (async () => {
+      try {
+        const row = await db.kv.get("caseAnalysis");
+        const v = row?.value as { analysis?: CaseAnalysis } | undefined;
+        if (v?.analysis) setAnalysis(v.analysis);
+      } catch {
+        /* nothing saved */
+      }
+    })();
     // Nothing handed over — pick up an unfinished scan if one was left behind.
     void (async () => {
-      if (busy || chunksRef.current.length) return;
+      if (busy || chunksRef.current.length || partsRef.current.length) return;
       const saved = await loadScanState();
-      if (!saved) return;
-      chunksRef.current = saved.chunks;
-      partsRef.current = saved.parts;
-      setRemaining(saved.remaining);
-      if (saved.parts.length) applyMerged(mergeScanResults(saved.parts));
+      if (saved) {
+        // Re-cut oversized parts before offering to resume.
+        //
+        // A saved scan carries the exact pieces it was cut into when it
+        // started, and part sizes have come down since — 60,000 characters,
+        // then 20,000, now 16,000, each cut because parts were being killed
+        // mid-stream by the platform's execution limit. Handing those same
+        // oversized pieces back to the model reproduces the timeout that
+        // stopped the scan in the first place, and bills for it. That is a 504
+        // on resume, over and over, for as long as the saved state survives.
+        //
+        // So anything larger than the current size is re-cut here, and the
+        // list of parts still to do is remapped onto the new pieces. What has
+        // already been read is untouched.
+        const rechunked: string[] = [];
+        const remap = new Map<number, number[]>();
+        saved.chunks.forEach((c, i) => {
+          const pieces = c.length > partSize ? chunkScanInput(c, partSize) : [c];
+          remap.set(
+            i,
+            pieces.map((p) => {
+              rechunked.push(p);
+              return rechunked.length - 1;
+            })
+          );
+        });
+        const newRemaining = saved.remaining.flatMap((i) => remap.get(i) ?? []);
+        const wasRecut = rechunked.length !== saved.chunks.length;
+        chunksRef.current = rechunked;
+        partsRef.current = saved.parts;
+        setRemaining(newRemaining);
+        if (saved.parts.length) applyMerged(mergeScanResults(saved.parts));
+        setLoadedNote(
+          `You have an unfinished scan — ${newRemaining.length} of ${rechunked.length} parts left. ` +
+            `Everything already read is below and saved. Tap "Scan remaining parts" to finish; ` +
+            `you do not need to upload anything again.` +
+            (wasRecut
+              ? " The remaining parts have been cut smaller than they were, so they finish instead of timing out."
+              : "")
+        );
+        return;
+      }
+      // No scan to resume, but a finished one may have left findings she never
+      // filed. Those used to vanish on reload; they are hers until she says
+      // otherwise.
+      const kept = await loadFindings();
+      if (!kept) return;
+      // Seeded as a single part so anything scanned from here merges with it
+      // instead of replacing it — the merge deduplicates, so re-finding the
+      // same incident cannot double it.
+      partsRef.current = [kept.result];
+      applyMerged(kept.result);
+      const n = kept.result.incidents.length + kept.result.messages.length;
+      const when = kept.savedAt ? new Date(kept.savedAt).toLocaleDateString() : "";
       setLoadedNote(
-        `You have an unfinished scan — ${saved.remaining.length} of ${saved.total} parts left. ` +
-          `Everything already read is below and saved. Tap "Scan remaining parts" to finish; ` +
-          `you do not need to upload anything again.`
+        `Still here — ${n.toLocaleString()} finding${n === 1 ? "" : "s"} from your scan` +
+          `${when ? ` on ${when}` : ""}, saved on this device. Nothing has been added to your ` +
+          `records yet; review them below and add the ones you want.`
       );
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
 
-  const run = async (resume = false, docOverride?: string) => {
+  /**
+   * `archiveFirst` is false when the document IS the archive.
+   *
+   * A re-scan renders her saved messages back into text and scans that. Feeding
+   * it to the importer as well asks the app to import a file it wrote itself,
+   * which at best re-adds what is already there and at worst reads her prose as
+   * columns. Nothing that came out of the database goes back into it.
+   */
+  const run = async (resume = false, docOverride?: string, archiveFirst = true) => {
     if (busy || needsKey) return;
     let chunks: string[];
     let indices: number[];
@@ -361,7 +610,7 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
       // worth nothing if it stops finding her evidence, so the shape the
       // scanner was proven against is the shape it gets. Speed can be revisited
       // once there is a working baseline to measure against, and not before.
-      chunks = chunkScanInput(doc);
+      chunks = chunkScanInput(doc, partSize);
       chunksRef.current = chunks;
       indices = chunks.map((_, i) => i);
       // Findings from an earlier run are KEPT.
@@ -375,6 +624,7 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     }
     setBusy(true);
     setError(null);
+    setLiveError(null);
     setAdded(null);
     setRemaining([]);
     // Deterministic first: if this is a message export, every row is saved to
@@ -382,13 +632,15 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     if (!resume) {
       docRef.current = chunks.join("\n");
       setPct(null);
-    setEta("");
-    setProgress("Saving every message to your archive…");
-      try {
-        const n = await archiveCsv(docOverride ?? text);
-        if (n) setProgress(`${n.toLocaleString()} messages saved. Now reading them…`);
-      } catch {
-        /* archive failure must not block the scan */
+      setEta("");
+      if (archiveFirst) {
+        setProgress("Saving every message to your archive…");
+        try {
+          const n = await archiveCsv(docOverride ?? text);
+          if (n) setProgress(`${n.toLocaleString()} messages saved. Now reading them…`);
+        } catch {
+          /* archive failure must not block the scan */
+        }
       }
     }
     const abort = new AbortController();
@@ -399,6 +651,16 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     // reply, a parse failure — which sent hours of debugging in the wrong
     // direction. Whatever it really is, she and I both get to see it.
     let firstError = "";
+    /** True once a failure arrives that no amount of retrying can fix. */
+    let fatal = false;
+    /** Records the reason once, and puts it on screen straight away. */
+    const noteError = (e: any) => {
+      const message = String(e?.message || e || "unknown");
+      if (isFatalScanError(message)) fatal = true;
+      if (firstError) return;
+      firstError = message;
+      setLiveError(firstError);
+    };
     const parts = partsRef.current;
 
     // A hundred and twenty-five parts is a long time to stare at a screen with
@@ -425,7 +687,10 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
           onDelta: () => {},
         });
         return parseScanResult(out);
-      } catch {
+      } catch (e) {
+        // Was swallowed silently, so when the split-in-half rescue failed too
+        // there was nothing at all to say why.
+        noteError(e);
         return null;
       }
     };
@@ -487,13 +752,16 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
           const full = await streamAdvocate({
             connection: settings.connection,
             apiKey: settings.apiKey,
-            // Scans are pinned to Opus regardless of the chat model picker —
-            // cataloging must be as careful as the case deserves.
+            // Pinned to SCAN_MODEL regardless of the chat model picker.
             model: SCAN_MODEL,
             history: [
               {
                 role: "user",
-                content: buildScanPrompt(chunks[idx], { index: idx + 1, total: chunks.length }),
+                content: buildScanPrompt(
+                  chunks[idx],
+                  { index: idx + 1, total: chunks.length },
+                  { his: settings.hisNames, others: settings.otherNames }
+                ),
               },
             ],
             caseContext: null,
@@ -506,11 +774,25 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
               setProgress(`Cataloging ${label}…${foundNote}`);
             },
           });
-          parts.push(parseScanResult(full || acc));
+          const got = parseScanResult(full || acc);
+          parts.push(got);
+          // A reply that had to be repaired was cut off mid-catalog, and the
+          // salvage path is good enough that it looks like a clean success —
+          // which is how evidence goes missing with nothing on screen saying
+          // so. Keep what came back (merge deduplicates, so nothing is counted
+          // twice) and leave the part marked unfinished so it is split and
+          // re-read, which is the only thing that recovers the cut-off tail.
+          //
+          // Deliberately NOT a retry: a part that was too long to finish is
+          // too long every time, so three attempts would buy three identical
+          // truncations and bill for all of them. Break straight out to the
+          // split path.
+          if (got.truncated) break;
           ok = true;
         } catch (e: any) {
-          if (!firstError) firstError = String(e?.message || e || "unknown");
-          if (abort.signal.aborted) break;
+          noteError(e);
+          // Nothing to gain from attempts two and three.
+          if (fatal || abort.signal.aborted) break;
           // Before paying for another attempt, check whether the one that just
           // failed already came back with a usable catalog. A part cut off near
           // the end still holds nearly all of its evidence, and re-running it
@@ -542,23 +824,69 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
       // identically however many times it is retried — more attempts just cost
       // more money for the same nothing. Two smaller pieces each have half the
       // work to do, and in practice both complete.
-      if (!ok && !abort.signal.aborted && chunks[idx].length > 6000) {
-        setProgress(`${label} was too big to finish — splitting it and trying again…`);
-        const mid = chunks[idx].lastIndexOf("\n", Math.floor(chunks[idx].length / 2)) + 1 ||
-          Math.floor(chunks[idx].length / 2);
-        const halves = [chunks[idx].slice(0, mid), chunks[idx].slice(mid)].filter((h) => h.trim());
+      if (!ok && !fatal && !abort.signal.aborted && chunks[idx].length > 3000) {
+        // Says what it is doing, not why it thinks it has to. Splitting is
+        // worth trying whatever went wrong; asserting the part was "too big"
+        // when the reply was actually a rejection is how a whole day gets
+        // spent shrinking things that were never too large.
+        setProgress(`${label} didn't come back — trying it in smaller pieces…`);
+        // Keep halving until it fits, rather than halving once and giving up.
+        //
+        // One split assumes half is always small enough. It is not: a part
+        // three times the current size needs two splits, and the old code paid
+        // for both halves, watched both fail for the same reason, and reported
+        // the part as lost. A piece that still cannot finish is split again,
+        // down to a floor below which the problem is certainly not size.
+        const halve = (s: string) => {
+          const mid =
+            s.lastIndexOf("\n", Math.floor(s.length / 2)) + 1 || Math.floor(s.length / 2);
+          return [s.slice(0, mid), s.slice(mid)].filter((h) => h.trim());
+        };
+        const FLOOR = 3000;
+        // TWO levels, so at most four pieces — and that ceiling is about money,
+        // not tidiness.
+        //
+        // Splitting all the way down to the floor sounds thorough and is a
+        // billing accident waiting to happen: when parts fail for a reason that
+        // is not size — a dropped stream, an overloaded model — every piece
+        // fails too, and each failure buys two more requests. Measured on a
+        // stubbed run where every reply was cut short, halving to the floor
+        // turned 8 parts into 136 requests. Four pieces covers a part up to
+        // four times too large, which is every real case here, and caps the
+        // damage at four requests when the cause was never size at all.
+        const MAX_DEPTH = 2;
+        const queue: { text: string; depth: number }[] = halve(chunks[idx]).map((t) => ({
+          text: t,
+          depth: 1,
+        }));
         let rescued = 0;
-        for (const h of halves) {
-          if (abort.signal.aborted) break;
-          const r = await scanPiece(h, idx + 1, chunks.length);
+        let lost = false;
+        while (queue.length) {
+          if (abort.signal.aborted || fatal) break;
+          const piece = queue.shift() as { text: string; depth: number };
+          const r = await scanPiece(piece.text, idx + 1, chunks.length);
           if (r) {
             parts.push(r);
             rescued++;
+          } else if (piece.depth < MAX_DEPTH && piece.text.length > FLOOR) {
+            queue.push(...halve(piece.text).map((t) => ({ text: t, depth: piece.depth + 1 })));
+          } else {
+            lost = true;
           }
         }
-        if (rescued === halves.length) ok = true;
+        if (rescued > 0 && !lost) ok = true;
       }
-      if (!ok && !abort.signal.aborted) failed.push(idx);
+      // A part that did not finish is a part still to do — including one that
+      // was in flight when she pressed Stop.
+      //
+      // This used to exclude aborted parts, on the reasoning that stopping is
+      // not a failure. But four parts run at once, so Stop lands in the middle
+      // of up to four of them, and excluding those meant they were dropped:
+      // never scanned, never saved, and never listed as remaining. On a 60,000
+      // character part that is a quarter of a million characters of her archive
+      // disappearing from the run, while the screen said the scan had merely
+      // stopped. She could tap "Scan remaining parts" and still never get them.
+      if (!ok) failed.push(idx);
       // Published the instant this part returns — she should watch findings
       // appear one at a time, not in silence and then four at once.
       if (parts.length) {
@@ -586,6 +914,38 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
           ? { chunks, remaining: stillToDo, parts, total: chunks.length, savedAt: Date.now() }
           : null
       );
+      // The findings outlive the scan that produced them. The line above
+      // deletes the resume record as soon as there is nothing left to resume,
+      // which used to take the only saved copy of the catalog with it.
+      if (parts.length) {
+        await saveFindings({ result: mergeScanResults(parts), savedAt: Date.now() });
+      }
+
+      // Stop a scan that cannot work, instead of billing for eighty parts to
+      // prove it.
+      //
+      // When the very first parts all fail, the cause is the request itself —
+      // no credit, a rejected key, a model the account cannot reach — and it
+      // will fail identically every remaining part. Failing parts are the
+      // expensive kind: three attempts plus two half-sized retries, five
+      // requests each, for nothing. A run of failures at the start is a
+      // different event from one part failing in the middle, and only the
+      // second is worth pushing through.
+      if (!abort.signal.aborted && (fatal || (!parts.length && completed >= 8))) {
+        failed.push(...indices.slice(b + batch.length));
+        abort.abort();
+        setLiveError(
+          (firstError || "the scan could not be completed") +
+            (fatal
+              ? "\n\nStopped straight away, because this is not something trying again would fix — " +
+                "every remaining part would come back with the same answer."
+              : "\n\nStopped after the first 8 parts, because every one of them failed the same " +
+                "way and the rest would have too.") +
+            " Nothing already in your records has been touched. Once that's sorted, tap scan " +
+            "again — it picks up from here rather than starting over."
+        );
+        break;
+      }
     }
 
     // Record which scanner produced these results, so a later, better one can
@@ -612,7 +972,11 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
           .join(", ")}${failed.length > 20 ? "…" : ""}) could not be read and ${
           failed.length === 1 ? "was" : "were"
         } skipped — everything else is cataloged below. Tap "Scan remaining parts" to finish.` +
-          (firstError ? `\n\nWhat went wrong: ${firstError}` : "")
+          // Same rule as the live banner: the real reason is shown unless it is
+          // a billing or key problem, which is not hers to see or to solve.
+          (firstError && !isFatalScanError(firstError)
+            ? `\n\nWhat went wrong: ${firstError}`
+            : "")
       );
     }
     setBusy(false);
@@ -636,6 +1000,85 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
    * archive is all that is needed. One button, always available once she has
    * messages, no file, no hunting.
    */
+  /**
+   * Empties the message list so she can add her export again cleanly.
+   *
+   * Messages only. Incidents, documents, evidence files, her journal and
+   * everything she has written stay untouched — those are her work, and this
+   * button exists to undo an import fault, not to wipe her case.
+   *
+   * A restore point is taken first, so if the wrong button was pressed at the
+   * worst possible moment, it is recoverable.
+   */
+  /**
+   * Which of the three steps she is on.
+   *
+   * 1 — there are still broken messages saved, so clear them
+   * 2 — the list is empty, so add the file
+   * 3 — real messages are saved, so scan them
+   */
+  /**
+   * Is the archive actually broken, or are there simply a few empty messages?
+   *
+   * The importer fault this repairs takes the wrong column and stores a
+   * timestamp as EVERY message — an archive where nothing anyone wrote is
+   * present at all. That is what the plan is for.
+   *
+   * Triggering on any count above zero turned a rounding error into an alarm:
+   * on a real device it announced "7 of your saved messages came in showing
+   * only a date" out of 24,740, and offered to delete all 24,740 to fix them.
+   * Seven date-only rows in an export that size are seven empty texts.
+   *
+   * So: a fifth of the archive, and at least fifty rows. Below that, say
+   * nothing — an unnecessary warning about her evidence being corrupt costs
+   * more than seven skipped rows ever could.
+   */
+  const brokenEnough =
+    broken !== null &&
+    broken >= 50 &&
+    !!archivedCount &&
+    broken >= archivedCount * 0.2;
+  const step = brokenEnough ? 1 : archivedCount === 0 ? 2 : 3;
+  /**
+   * Keep showing the plan until she has been walked all the way to a scan —
+   * otherwise clearing makes the instructions vanish at the exact moment she
+   * needs step two.
+   */
+  const needsRepair = brokenEnough || repairing;
+
+  const clearArchive = async () => {
+    const n = archivedCount || 0;
+    if (
+      !confirm(
+        `Remove all ${n.toLocaleString()} saved messages and start the message list over?\n\n` +
+          "Your incidents, documents, photos and notes are NOT touched — only the message list.\n\n" +
+          "Do this if your messages imported showing only a date instead of what was said. " +
+          "Afterwards, add your export file again and it will come in properly.\n\n" +
+          "A restore point is saved first, so this can be undone."
+      )
+    )
+      return;
+    setError(null);
+    setProgress("Saving a restore point…");
+    try {
+      await takeSnapshot("before clearing the message list");
+      setProgress("Clearing the message list…");
+      setRepairing(true);
+      await db.messages.clear();
+      // Any half-finished scan refers to messages that no longer exist.
+      await saveScanState(null);
+      await saveFindings(null);
+      setProgress("");
+      setLoadedNote(null);
+      setError(
+        "Your message list is empty and a restore point was saved. Tap “Upload file” and add your export again — it will come in with what was actually said, and each message marked with who sent it."
+      );
+    } catch (e: any) {
+      setProgress("");
+      setError("Couldn't clear the message list: " + (e?.message || "unknown error"));
+    }
+  };
+
   const rescanArchive = async () => {
     setError(null);
     setProgress("Reading your archive…");
@@ -653,11 +1096,68 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
       setLoadedNote(
         `Reading ${rows.length.toLocaleString()} messages straight from your archive — nothing to upload.`
       );
-      await run(false, doc);
+      // These messages are already saved; importing them again is what must not
+      // happen.
+      await run(false, doc, false);
     } catch (e: any) {
       setProgress("");
       setError("Couldn't read your archive: " + (e?.message || "unknown error"));
     }
+  };
+
+  /**
+   * Read the whole catalog at once and write the analysis no single part could.
+   *
+   * Runs over the findings, not the archive, so it is one request regardless of
+   * how big her export was.
+   */
+  const analyseWholeCase = async () => {
+    if (!result || analysing) return;
+    setAnalysing(true);
+    setError(null);
+    setLiveError(null);
+    setProgress("Reading the whole case together — patterns, timeline, danger indicators…");
+    try {
+      const out = await streamAdvocate({
+        connection: settings.connection,
+        apiKey: settings.apiKey,
+        model: SCAN_MODEL,
+        history: [{ role: "user", content: buildSynthesisPrompt(result, settings.hisNames) }],
+        caseContext: null,
+        webSearch: false,
+        mode: "scan",
+        onDelta: () => {},
+      });
+      const parsed = parseCaseAnalysis(out);
+      setAnalysis(parsed);
+      try {
+        await db.kv.put({ key: "caseAnalysis", value: { analysis: parsed, savedAt: Date.now() } });
+      } catch {
+        /* never fail an analysis over bookkeeping */
+      }
+    } catch (e: any) {
+      setLiveError(String(e?.message || e || "unknown"));
+    } finally {
+      setAnalysing(false);
+      setProgress("");
+    }
+  };
+
+  /** Put the analysis in Documents, where it goes into the attorney packet. */
+  const saveAnalysisAsDoc = async () => {
+    if (!analysis) return;
+    const now = Date.now();
+    await db.documents.add({
+      title: `Case analysis — patterns across the whole record (${new Date().toISOString().slice(0, 10)})`,
+      content:
+        "Written by reading every finding from the deep scan together, rather than " +
+        "message by message. Everything below is drawn from quotes already in your " +
+        "records.\n\n" +
+        analysisAsText(analysis),
+      createdAt: now,
+      updatedAt: now,
+    });
+    setAdded("Saved the case analysis to Documents.");
   };
 
   const toggle = (set: Set<number>, i: number, save: (s: Set<number>) => void) => {
@@ -714,7 +1214,13 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
   };
 
   const commit = async () => {
-    if (!result) return;
+    // The guard is not cosmetic: filing used to take minutes (see below) with
+    // no busy state, and a second press during the crawl filed every incident
+    // twice.
+    if (!result || committing.current) return;
+    committing.current = true;
+    setCommitting(true);
+    try {
     const now = Date.now();
     const incidents = result.incidents.filter((_, i) => pickedInc.has(i));
     const messages = result.messages.filter((_, i) => pickedMsg.has(i));
@@ -732,6 +1238,10 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
           policeReport: "",
           medical: "",
           childrenPresent: i.childrenPresent,
+          // So she can always tell which entries the scan wrote and which she
+          // wrote herself — and everything filed by one press shares this
+          // exact createdAt, which is what marks it as newly added.
+          source: "scan",
           createdAt: now,
         }))
       );
@@ -740,19 +1250,38 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
       // Messages already archived from the CSV get starred and tagged in
       // place — never duplicated. Anything the archive doesn't have (a quote
       // pulled from a journal or screenshot) is added.
+      //
+      // ONE pass over the archive builds the lookup. The previous version ran
+      // a fresh table scan PER SELECTED MESSAGE — at 25,000 rows and a few
+      // hundred selections that is minutes of silent grinding behind a button
+      // that looked dead, which read as "I hit save and nothing was added."
+      const keyOf = (t: string) => t.trim().slice(0, 160);
+      const existing = new Map<string, { id: number; tags: string[] }>();
+      // toArray, not each(): a cursor walk pays a round trip per row, which
+      // measured ~25 seconds across 25,000 rows. One bulk read is instant.
+      for (const row of await db.messages.toArray()) {
+        if (row.id == null) continue;
+        const k = keyOf(row.text);
+        if (!existing.has(k)) existing.set(k, { id: row.id, tags: row.tags || [] });
+      }
       const fresh: typeof messages = [];
+      const updates: { key: number; changes: { starred: boolean; tags: string[] } }[] = [];
       for (const m of messages) {
-        const key = m.text.trim().slice(0, 160);
-        const existing = await db.messages.filter((row) => row.text.trim().slice(0, 160) === key).first();
-        if (existing?.id != null) {
-          await db.messages.update(existing.id, {
-            starred: true,
-            tags: Array.from(new Set([...(existing.tags || []), ...m.tags])),
+        const hit = existing.get(keyOf(m.text));
+        if (hit) {
+          updates.push({
+            key: hit.id,
+            changes: { starred: true, tags: Array.from(new Set([...hit.tags, ...m.tags])) },
           });
         } else {
           fresh.push(m);
         }
       }
+      // One transaction. As individual update() calls this was hundreds of
+      // separate transactions, each with its own durability flush — measured
+      // hanging past sixty seconds on a 25,000-row archive, which is how a
+      // working save looked identical to a dead button.
+      if (updates.length) await db.messages.bulkUpdate(updates);
       if (fresh.length) {
         await db.messages.bulkAdd(
           fresh.map((m) => ({
@@ -770,7 +1299,8 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     setAdded(
       `Added ${incidents.length} incident${incidents.length === 1 ? "" : "s"} and ${messages.length} flagged message${
         messages.length === 1 ? "" : "s"
-      } to your records.`
+      } to your records. Each incident is filed under the date it happened — on the Incidents page ` +
+      `that means it sits at its date, not at the top of the list.`
     );
     setResult(null);
     setText("");
@@ -778,6 +1308,15 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     setLoadedNote(null);
     chunksRef.current = [];
     partsRef.current = [];
+    // Filed into her records now, so the working copy is cleared — otherwise a
+    // reload would offer the same findings again and adding them twice would
+    // put duplicate incidents in her case file.
+    await saveFindings(null);
+    await saveScanState(null);
+    } finally {
+      committing.current = false;
+      setCommitting(false);
+    }
   };
 
   return (
@@ -814,10 +1353,72 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
         )}
         <p className="muted small" style={{ margin: "6px 0" }}>
           {text.trim().length.toLocaleString()} characters
-          {text.trim().length > SCAN_CHUNK_SIZE
+          {text.trim().length > partSize
             ? ` — will scan in ${estParts} parts, automatically`
             : " — no size limit; paste or upload the whole export"}
         </p>
+        {estimate && (
+          <p className="small" style={{ margin: "6px 0", fontWeight: 600 }}>
+            This will take roughly {estimate.minsLow}–{estimate.minsHigh} minutes.{" "}
+            <span className="muted" style={{ fontWeight: 400 }}>
+              You can stop at any point and pick up where you left off — nothing is lost and
+              nothing is read twice.
+            </span>
+          </p>
+        )}
+        {/*
+          One thing to do at a time, in order, with the reason in plain words.
+          She is not debugging an import bug; she is being told which button to
+          press next and what it will do.
+        */}
+        {needsRepair && !busy && (
+          <div
+            className="card"
+            style={{ borderLeft: "4px solid var(--accent, #b4462f)", padding: 12, margin: "10px 0" }}
+          >
+            <strong>Your messages need adding again — three steps, about two minutes.</strong>
+            <p className="small" style={{ marginTop: 6 }}>
+              {broken
+                ? `${broken.toLocaleString()} of your saved messages came in showing only a date, with none of what was actually said. That was a fault in how the file was read, and it is fixed now — but the messages already saved have to be added again before a scan can find anything in them.`
+                : "Your message list is empty. Add your export file and it will come in with what was actually said, and each message marked with who sent it."}
+            </p>
+            <ol className="small" style={{ lineHeight: 2, paddingLeft: 20, margin: "8px 0 0" }}>
+              <li>
+                <strong>{step > 1 ? "✓ Cleared" : "Clear the old messages."}</strong>{" "}
+                {step === 1 && (
+                  <>
+                    Your incidents, documents and photos are not touched.{" "}
+                    <button className="btn sm" onClick={() => void clearArchive()}>
+                      Clear my messages
+                    </button>
+                  </>
+                )}
+              </li>
+              <li>
+                <strong>{step > 2 ? "✓ Added" : "Add your export file again."}</strong>{" "}
+                {step === 2 && (
+                  <>
+                    The same file you used before.{" "}
+                    <button className="btn sm" onClick={() => fileRef.current?.click()}>
+                      Choose my file
+                    </button>
+                  </>
+                )}
+              </li>
+              <li>
+                <strong>Scan it, and save what it finds.</strong>{" "}
+                {step === 3 && (
+                  <>
+                    Leave it running until it finishes.{" "}
+                    <button className="btn sm" onClick={() => void rescanArchive()}>
+                      Scan my {archivedCount.toLocaleString()} messages
+                    </button>
+                  </>
+                )}
+              </li>
+            </ol>
+          </div>
+        )}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button className="btn" disabled={busy || needsKey || !text.trim()} onClick={() => void run()}>
             {busy ? "Scanning…" : "Scan & catalog"}
@@ -861,6 +1462,23 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
           <button className="btn ghost" disabled={busy} onClick={() => fileRef.current?.click()}>
             Upload file (.csv, .txt…)
           </button>
+          {/*
+            Here, not buried in settings.
+            Her messages imported with the date where the words should have
+            been, so the fix is: empty the message list, add the file again.
+            That is two taps on the screen she is already looking at, and it
+            touches nothing except messages — every incident, document, photo
+            and note she has built stays exactly where it is.
+          */}
+          {!busy && !!archivedCount && !needsRepair && (
+            <button
+              className="btn ghost"
+              onClick={() => void clearArchive()}
+              title="Empties the message list only — your incidents, documents and evidence are untouched"
+            >
+              Clear messages & start over
+            </button>
+          )}
           <button className="btn ghost" disabled={busy} onClick={() => shotRef.current?.click()}>
             Add screenshots (OCR)
           </button>
@@ -926,7 +1544,7 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
                   {result.incidents.length === 1 ? "" : "s"} and {result.messages.length} message
                   {result.messages.length === 1 ? "" : "s"}
                 </strong>{" "}
-                — listed further down this page, and they keep appearing as it goes.
+                — the most serious so far are below, and the list re-ranks itself as it goes.
               </p>
             )}
             {dupes > 0 && (
@@ -943,8 +1561,12 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
               // reassuring; seeing the actual thing it just found in her own
               // record is the difference between believing it works and hoping.
               <ul className="small muted" style={{ margin: "4px 0 0", paddingLeft: 18, lineHeight: 1.6 }}>
-                {result.incidents.slice(-3).reverse().map((i, n) => (
+                {result.incidents.slice(0, 3).map((i, n) => (
                   <li key={`${i.date}-${n}`}>
+                    <span className="sev-dots">
+                      {"\u25CF".repeat(i.severity)}
+                      {"\u25CB".repeat(Math.max(0, 5 - i.severity))}
+                    </span>{" "}
                     <strong>{i.date || "no date"}</strong> — {(i.title || "").slice(0, 90)}
                   </li>
                 ))}
@@ -954,6 +1576,41 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
               You can leave this page or close the app — everything found so far is saved, and it
               picks up where it stopped.
             </p>
+          </div>
+        )}
+        {liveError && (
+          // Right under the progress bar, where she is already looking, the
+          // moment the first part fails — not twenty minutes later.
+          // What she is shown depends on whose problem it is.
+          //
+          // A billing or key problem belongs to whoever set this app up for
+          // her, and she is never shown the money — not the balance, not the
+          // rate, not a link to a billing page, not the server's own wording.
+          // Asking a woman assembling the evidence of her own abuse to go and
+          // top up an account before she is allowed to look at it is not
+          // something this app will do. She gets told it is not her, not her
+          // case, and not lost, and that it will be dealt with.
+          //
+          // Everything else — a dropped connection, an overloaded model — is
+          // shown as it came, because that is information she can act on.
+          <div className="notice" style={{ marginTop: 10 }}>
+            {isFatalScanError(liveError) ? (
+              <>
+                <strong>The AI service isn't answering at the moment.</strong>
+                <p className="small" style={{ margin: "6px 0 0" }}>
+                  This is a problem with the service itself, not with your case, your file, or
+                  anything you did. Every message and every finding you already have is safe on
+                  this device. Whoever set this up for you will get it working — and when it is,
+                  tap scan again and it carries on from exactly where it stopped, without
+                  re-reading anything.
+                </p>
+              </>
+            ) : (
+              <>
+                <strong>A part came back with this:</strong>
+                <p style={{ whiteSpace: "pre-wrap", margin: "6px 0" }}>{liveError}</p>
+              </>
+            )}
           </div>
         )}
         {progress && <p className="muted small" style={{ marginTop: 8 }}>{progress}</p>}
@@ -969,7 +1626,7 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
         {dupNote && (
           <div className="notice calm" style={{ marginTop: 10 }}>
             {dupNote} Uploading the same export again is safe — it never duplicates your archive,
-            and it costs nothing extra to do.
+            and it never adds the same message twice.
           </div>
         )}
 
@@ -998,12 +1655,35 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
                 Got it — messages from {settings.hisNames} are treated as his.
               </p>
             )}
+            {/*
+              Names of people talked about, not people who sent anything. The
+              buttons above only list senders, so a girlfriend he moved in, a
+              child, or a relative who never texted her is invisible to the
+              scan no matter how often the two of them wrote about her.
+            */}
+            <label className="small" style={{ display: "block", marginTop: 10 }}>
+              Anyone else this case is about — a new partner, your children, his
+              family, a witness. Separate names with commas.
+              <input
+                type="text"
+                className="input"
+                style={{ marginTop: 4 }}
+                placeholder="e.g. his girlfriend's name, your children's names"
+                value={settings.otherNames}
+                onChange={(e) => update({ otherNames: e.target.value })}
+              />
+            </label>
+            <p className="muted small" style={{ marginBottom: 0 }}>
+              {settings.otherNames
+                ? `The scan will treat any mention of ${settings.otherNames} as worth recording, with its date.`
+                : "Without this, their names read as ordinary chatter and the scan passes over them."}
+            </p>
           </div>
         )}
         <p className="muted small" style={{ marginTop: 8 }}>
-          Deep scans always run on Claude Opus 5. A very large export takes a while — keep this
-          tab open; you can stop anytime and finish later, and results appear below as each part
-          completes.
+          Deep scans always run on Claude Opus 5, whatever the chat is set to. A very large
+          export takes a while — you can leave this page or close the app; everything found is
+          saved as it goes, and results appear below as each part completes.
         </p>
       </div>
 
@@ -1168,15 +1848,163 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
           )}
 
           <div className="panel">
+            <h2>See the whole case at once</h2>
+            <p className="small" style={{ marginTop: 0 }}>
+              The scan reads your archive in parts, a few weeks at a time, so no single part
+              can see the shape of the whole thing — whether it got worse, what it happened
+              around, which of the danger signs are actually present, who else saw it, and
+              where his own words contradict what he'll say in court. This reads every finding
+              together and writes that down. It works from what the scan already found rather
+              than the messages themselves, so it only takes a moment.
+            </p>
+            {!analysis && (
+              <button className="btn" disabled={analysing || busy} onClick={() => void analyseWholeCase()}>
+                {analysing ? "Reading the whole case…" : "Analyse the whole case"}
+              </button>
+            )}
+
+            {analysis && (
+              <>
+                {analysis.headline && (
+                  <p style={{ whiteSpace: "pre-wrap", fontWeight: 600 }}>{analysis.headline}</p>
+                )}
+
+                {analysis.lethality.some((l) => l.present !== "not in this record") && (
+                  <div className="item-card sev-5">
+                    <div className="head">
+                      <span className="title">
+                        Danger indicators present: {lethalityCount(analysis)} confirmed
+                      </span>
+                    </div>
+                    <p className="small" style={{ margin: "6px 0" }}>
+                      These are the factors research links to the most serious outcomes. They
+                      are the strongest support a Texas protective order can have.
+                    </p>
+                    {analysis.lethality
+                      .filter((l) => l.present !== "not in this record")
+                      .map((l, i) => (
+                        <div key={i} style={{ margin: "8px 0" }}>
+                          <strong>
+                            {l.factor} — {l.present}
+                            {l.date ? ` (${l.date})` : ""}
+                          </strong>
+                          {l.evidence && (
+                            <p style={{ whiteSpace: "pre-wrap", margin: "2px 0 0" }}>"{l.evidence}"</p>
+                          )}
+                        </div>
+                      ))}
+                  </div>
+                )}
+
+                {analysis.trajectory && (
+                  <>
+                    <h3>How it changed over time</h3>
+                    <p style={{ whiteSpace: "pre-wrap" }}>{analysis.trajectory}</p>
+                  </>
+                )}
+
+                {analysis.clusters.length > 0 && (
+                  <>
+                    <h3>When it got worse, and what was happening</h3>
+                    {analysis.clusters.map((c, i) => (
+                      <div className="item-card" key={i}>
+                        <div className="head">
+                          <span className="date">{c.period}</span>
+                          <span className="title">{c.trigger}</span>
+                        </div>
+                        <p style={{ whiteSpace: "pre-wrap", margin: "6px 0 0" }}>{c.what}</p>
+                      </div>
+                    ))}
+                  </>
+                )}
+
+                {analysis.cycle && (
+                  <>
+                    <h3>The pattern it repeats</h3>
+                    <p style={{ whiteSpace: "pre-wrap" }}>{analysis.cycle}</p>
+                  </>
+                )}
+
+                {analysis.contradictions.length > 0 && (
+                  <>
+                    <h3>His own words that undercut him ({analysis.contradictions.length})</h3>
+                    <p className="small muted" style={{ marginTop: 0 }}>
+                      In Texas his own statements come in against him. These are the ones that
+                      will not sit alongside the position he is likely to take.
+                    </p>
+                    {analysis.contradictions.map((c, i) => (
+                      <div className="item-card" key={i}>
+                        <div className="head">
+                          {c.date && <span className="date">{c.date}</span>}
+                          <span className="title">{c.contradicts}</span>
+                        </div>
+                        <p style={{ whiteSpace: "pre-wrap", margin: "6px 0", fontWeight: 600 }}>
+                          "{c.hisWords}"
+                        </p>
+                        <p className="small muted" style={{ margin: 0 }}>{c.whyItMatters}</p>
+                      </div>
+                    ))}
+                  </>
+                )}
+
+                {analysis.corroboration.length > 0 && (
+                  <>
+                    <h3>Proof that doesn't depend on your word ({analysis.corroboration.length})</h3>
+                    {analysis.corroboration.map((c, i) => (
+                      <div className="item-card" key={i}>
+                        <div className="head">
+                          {c.date && <span className="date">{c.date}</span>}
+                          <span className="title">
+                            {c.kind === "record" ? "Record" : "Witness"}: {c.who}
+                          </span>
+                        </div>
+                        <p style={{ whiteSpace: "pre-wrap", margin: "6px 0" }}>{c.what}</p>
+                        <p className="small muted" style={{ margin: 0 }}>{c.howToGetIt}</p>
+                      </div>
+                    ))}
+                  </>
+                )}
+
+                {analysis.gaps.length > 0 && (
+                  <>
+                    <h3>What's missing</h3>
+                    <ul style={{ lineHeight: 1.7 }}>
+                      {analysis.gaps.map((g, i) => (
+                        <li key={i}>{g}</li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+
+                <div className="row" style={{ gap: 8, marginTop: 10 }}>
+                  <button className="btn secondary" onClick={() => void saveAnalysisAsDoc()}>
+                    Save this to Documents
+                  </button>
+                  <button
+                    className="btn ghost"
+                    disabled={analysing}
+                    onClick={() => void analyseWholeCase()}
+                  >
+                    Run it again
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="panel">
             <h2>What the scan found</h2>
+            {/* The save is the whole point of this screen, so it comes before
+                the summary — below it, a long summary buried the one button
+                that matters under a page of prose. */}
+            <button className="btn" disabled={busy || isCommitting} onClick={() => void commit()}>
+              {isCommitting ? "Adding to your records…" : `Add ${pickedInc.size + pickedMsg.size} selected to my records`}
+            </button>
             {result.summary && <p style={{ whiteSpace: "pre-wrap" }}>{result.summary}</p>}
             <label className="field" style={{ maxWidth: 280 }}>
               <span>Date to use for undated items (marked for you to confirm)</span>
               <input type="date" value={fallbackDate} onChange={(e) => setFallbackDate(e.target.value)} />
             </label>
-            <button className="btn" disabled={busy} onClick={() => void commit()}>
-              Add {pickedInc.size + pickedMsg.size} selected to my records
-            </button>
             {busy && (
               <p className="muted small" style={{ marginTop: 6 }}>
                 Still scanning — the list below grows as parts finish. Save when it's done (or
@@ -1252,6 +2080,32 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/*
+            The same save button again, at the end.
+            There was only one, above a list of up to 800 findings, so anyone
+            who read to the bottom — the careful thing to do before writing
+            entries into a case file — arrived with nothing to press.
+          */}
+          {(result.incidents.length > 0 || result.messages.length > 0) && (
+            <div className="panel">
+              <h2>Ready to save</h2>
+              <p className="small muted" style={{ marginTop: 0 }}>
+                Anything still ticked above goes into your records. Untick what you do not
+                want kept — you can always scan again, but this is the moment to leave
+                the small stuff out.
+              </p>
+              <button className="btn" disabled={busy || isCommitting} onClick={() => void commit()}>
+                {isCommitting ? "Adding to your records…" : `Add ${pickedInc.size + pickedMsg.size} selected to my records`}
+              </button>
+              {busy && (
+                <p className="muted small" style={{ marginTop: 6 }}>
+                  Available as soon as the scan stops — press “Stop — keep what's found so
+                  far” if you want to save now.
+                </p>
+              )}
             </div>
           )}
         </>

@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { autoSnapshot, ensurePersistence } from "./safety";
 import { autoRepair } from "./autoRepair";
+import { useNewestBuild } from "./freshBuild";
 import "./styles.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
@@ -14,9 +15,20 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
 // Offline support + installability (Add to Home Screen on iPhone).
 if ("serviceWorker" in navigator && import.meta.env.PROD) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch(() => {});
+    // updateViaCache: "none" so the worker script itself is never served from
+    // cache — otherwise the thing responsible for updating the app is the one
+    // piece that never updates.
+    navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).catch(() => {});
   });
 }
+
+// Run the version that is actually deployed.
+//
+// A deploy that is verified live and still not running in the browser looking
+// at it is worse than no deploy: it produces old behaviour with no sign that
+// the code is old. Checked at startup only, so a scan in progress is never
+// interrupted.
+if (import.meta.env.PROD) void useNewestBuild();
 
 // Ask the browser to protect this site's storage from automatic eviction —
 // her records must survive storage-pressure cleanup.

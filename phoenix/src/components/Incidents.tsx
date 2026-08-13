@@ -266,6 +266,20 @@ export default function Incidents() {
               {i.time ? ` · ${i.time}` : ""}
             </span>
             <span className="title">{i.title || "(untitled)"}</span>
+            {/* Entries are filed under the date they HAPPENED, so something
+                added today about 2023 lands mid-list where it is invisible as
+                an addition. The chip is how "did my save work?" gets answered
+                by looking at the list itself. */}
+            {Date.now() - i.createdAt < 48 * 3600_000 && (
+              <span className="tag" title="Added to your records in the last two days">
+                just added
+              </span>
+            )}
+            {i.source === "scan" && (
+              <span className="tag" title="Catalogued by the Deep Scan — the wording is the scanner's, the record is yours to edit">
+                from scan
+              </span>
+            )}
             <span className="sev-dots">{"●".repeat(i.severity)}{"○".repeat(5 - i.severity)}</span>
           </div>
           <p style={{ whiteSpace: "pre-wrap", margin: "6px 0" }}>{i.narrative}</p>
