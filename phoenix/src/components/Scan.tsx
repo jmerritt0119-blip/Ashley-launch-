@@ -244,6 +244,10 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
   /** Findings the merge dropped because an earlier part already had them. */
   const [dupes, setDupes] = useState(0);
   const [added, setAdded] = useState<string | null>(null);
+  // Ref blocks the double-press (state alone lags a render); state drives the
+  // button's "Adding…" label so a long filing is visibly working, not dead.
+  const committing = useRef(false);
+  const [isCommitting, setCommitting] = useState(false);
   const [remaining, setRemaining] = useState<number[]>([]);
   const [loadedNote, setLoadedNote] = useState<string | null>(null);
   const [archived, setArchived] = useState<number>(0);
@@ -1210,7 +1214,13 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
   };
 
   const commit = async () => {
-    if (!result) return;
+    // The guard is not cosmetic: filing used to take minutes (see below) with
+    // no busy state, and a second press during the crawl filed every incident
+    // twice.
+    if (!result || committing.current) return;
+    committing.current = true;
+    setCommitting(true);
+    try {
     const now = Date.now();
     const incidents = result.incidents.filter((_, i) => pickedInc.has(i));
     const messages = result.messages.filter((_, i) => pickedMsg.has(i));
@@ -1228,6 +1238,10 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
           policeReport: "",
           medical: "",
           childrenPresent: i.childrenPresent,
+          // So she can always tell which entries the scan wrote and which she
+          // wrote herself — and everything filed by one press shares this
+          // exact createdAt, which is what marks it as newly added.
+          source: "scan",
           createdAt: now,
         }))
       );
@@ -1236,19 +1250,38 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
       // Messages already archived from the CSV get starred and tagged in
       // place — never duplicated. Anything the archive doesn't have (a quote
       // pulled from a journal or screenshot) is added.
+      //
+      // ONE pass over the archive builds the lookup. The previous version ran
+      // a fresh table scan PER SELECTED MESSAGE — at 25,000 rows and a few
+      // hundred selections that is minutes of silent grinding behind a button
+      // that looked dead, which read as "I hit save and nothing was added."
+      const keyOf = (t: string) => t.trim().slice(0, 160);
+      const existing = new Map<string, { id: number; tags: string[] }>();
+      // toArray, not each(): a cursor walk pays a round trip per row, which
+      // measured ~25 seconds across 25,000 rows. One bulk read is instant.
+      for (const row of await db.messages.toArray()) {
+        if (row.id == null) continue;
+        const k = keyOf(row.text);
+        if (!existing.has(k)) existing.set(k, { id: row.id, tags: row.tags || [] });
+      }
       const fresh: typeof messages = [];
+      const updates: { key: number; changes: { starred: boolean; tags: string[] } }[] = [];
       for (const m of messages) {
-        const key = m.text.trim().slice(0, 160);
-        const existing = await db.messages.filter((row) => row.text.trim().slice(0, 160) === key).first();
-        if (existing?.id != null) {
-          await db.messages.update(existing.id, {
-            starred: true,
-            tags: Array.from(new Set([...(existing.tags || []), ...m.tags])),
+        const hit = existing.get(keyOf(m.text));
+        if (hit) {
+          updates.push({
+            key: hit.id,
+            changes: { starred: true, tags: Array.from(new Set([...hit.tags, ...m.tags])) },
           });
         } else {
           fresh.push(m);
         }
       }
+      // One transaction. As individual update() calls this was hundreds of
+      // separate transactions, each with its own durability flush — measured
+      // hanging past sixty seconds on a 25,000-row archive, which is how a
+      // working save looked identical to a dead button.
+      if (updates.length) await db.messages.bulkUpdate(updates);
       if (fresh.length) {
         await db.messages.bulkAdd(
           fresh.map((m) => ({
@@ -1266,7 +1299,8 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     setAdded(
       `Added ${incidents.length} incident${incidents.length === 1 ? "" : "s"} and ${messages.length} flagged message${
         messages.length === 1 ? "" : "s"
-      } to your records.`
+      } to your records. Each incident is filed under the date it happened — on the Incidents page ` +
+      `that means it sits at its date, not at the top of the list.`
     );
     setResult(null);
     setText("");
@@ -1279,6 +1313,10 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
     // put duplicate incidents in her case file.
     await saveFindings(null);
     await saveScanState(null);
+    } finally {
+      committing.current = false;
+      setCommitting(false);
+    }
   };
 
   return (
@@ -1956,14 +1994,17 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
 
           <div className="panel">
             <h2>What the scan found</h2>
+            {/* The save is the whole point of this screen, so it comes before
+                the summary — below it, a long summary buried the one button
+                that matters under a page of prose. */}
+            <button className="btn" disabled={busy || isCommitting} onClick={() => void commit()}>
+              {isCommitting ? "Adding to your records…" : `Add ${pickedInc.size + pickedMsg.size} selected to my records`}
+            </button>
             {result.summary && <p style={{ whiteSpace: "pre-wrap" }}>{result.summary}</p>}
             <label className="field" style={{ maxWidth: 280 }}>
               <span>Date to use for undated items (marked for you to confirm)</span>
               <input type="date" value={fallbackDate} onChange={(e) => setFallbackDate(e.target.value)} />
             </label>
-            <button className="btn" disabled={busy} onClick={() => void commit()}>
-              Add {pickedInc.size + pickedMsg.size} selected to my records
-            </button>
             {busy && (
               <p className="muted small" style={{ marginTop: 6 }}>
                 Still scanning — the list below grows as parts finish. Save when it's done (or
@@ -2056,8 +2097,8 @@ export default function Scan({ settings, goSettings, update, active = true }: Pr
                 want kept — you can always scan again, but this is the moment to leave
                 the small stuff out.
               </p>
-              <button className="btn" disabled={busy} onClick={() => void commit()}>
-                Add {pickedInc.size + pickedMsg.size} selected to my records
+              <button className="btn" disabled={busy || isCommitting} onClick={() => void commit()}>
+                {isCommitting ? "Adding to your records…" : `Add ${pickedInc.size + pickedMsg.size} selected to my records`}
               </button>
               {busy && (
                 <p className="muted small" style={{ marginTop: 6 }}>

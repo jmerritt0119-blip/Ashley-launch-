@@ -18,6 +18,12 @@ export interface Incident {
   policeReport?: string;
   medical?: string;
   childrenPresent: boolean;
+  /**
+   * "scan" when the Deep Scan filed it; absent when she wrote it herself.
+   * Additive and unindexed — rows written before this field exists are
+   * untouched and simply have no source.
+   */
+  source?: string;
   createdAt: number;
 }
 
