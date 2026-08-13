@@ -177,6 +177,33 @@ export async function recoverPassphrase(code: string, recoveryKey: string): Prom
   }
 }
 
+/**
+ * Does this passphrase open what is currently in the vault?
+ *
+ * Checked BEFORE overwriting. Every save encrypts under whatever passphrase
+ * was just typed, so a typo here would not fail — it would succeed, and quietly
+ * leave the newest version of her case under a passphrase nobody knows. The
+ * next pull from her phone would then be told "wrong passphrase" while holding
+ * the right one. Refusing the save is the only honest response to a mismatch.
+ *
+ * Returns null when nothing is saved under the code yet — a first save has
+ * nothing to contradict.
+ */
+export async function passphraseOpensVault(
+  code: string,
+  passphrase: string
+): Promise<boolean | null> {
+  const res = await fetch(`/api/vault?code=${encodeURIComponent(code)}`, { method: "GET" });
+  if (!res.ok) return null;
+  const envelope = await res.json();
+  try {
+    await decryptJson(envelope, passphrase);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Has anything been saved under this code? Used to warn before overwriting. */
 export async function vaultStatus(code: string): Promise<VaultStatus | null> {
   const res = await fetch(`/api/vault?code=${encodeURIComponent(code)}`, { method: "GET" });

@@ -4,7 +4,14 @@ import { db, exportAllData, importAllData, wipeAllData } from "../db";
 import { decryptJson, encryptJson, hashPin, randomSaltHex } from "../crypto";
 import { MODEL_OPTIONS, type Settings } from "../settings";
 import { biometricsSupported, enrollBiometric } from "../webauthn";
-import { makeVaultCode, normalizeVaultCode, pullVault, pushVault, recoverPassphrase } from "../sync";
+import {
+  makeVaultCode,
+  normalizeVaultCode,
+  passphraseOpensVault,
+  pullVault,
+  pushVault,
+  recoverPassphrase,
+} from "../sync";
 import { makeRecoveryKey } from "../crypto";
 import { buildLabel } from "../buildStamp";
 import DataSafety from "./DataSafety";
@@ -64,11 +71,31 @@ Created ${new Date().toLocaleString()}
 
   const turnOnVault = async () => {
     if (vaultPass.length < 8) {
-      return setVaultMsg("Pick a passphrase of at least 8 characters first.");
+      return setVaultMsg(
+        settings.vaultCode
+          ? "Type your backup passphrase in the box above first — the same one you chose when you turned this on."
+          : "Pick a passphrase of at least 8 characters first."
+      );
     }
     const code = settings.vaultCode || makeVaultCode();
     const key = settings.vaultRecoveryKey || makeRecoveryKey();
     setVaultBusy(true);
+    // Every save encrypts under the passphrase just typed. Saving over an
+    // existing vault with a mistyped one would not fail — it would succeed,
+    // and strand the newest version of her case under a passphrase nobody
+    // knows. So before overwriting, prove the typed passphrase opens what is
+    // already there.
+    if (settings.vaultCode) {
+      setVaultMsg("Checking your passphrase against the backup…");
+      const opens = await passphraseOpensVault(code, vaultPass).catch(() => null);
+      if (opens === false) {
+        setVaultBusy(false);
+        return setVaultMsg(
+          "That's not the passphrase this backup uses, so nothing was saved. " +
+            'If you\'ve forgotten it, your Recovery Kit can give it back — see "I forgot the passphrase" below.'
+        );
+      }
+    }
     setVaultMsg("Encrypting everything on this device…");
     try {
       const { savedAt, filesDropped } = await pushVault(
@@ -401,6 +428,22 @@ Created ${new Date().toLocaleString()}
                 ? `Last saved ${new Date(vaultSaved.value).toLocaleString()}.`
                 : "Nothing saved to it yet — tap Save now."}
             </div>
+            {/*
+              This box existed only in the "backup is off" branch, and the
+              passphrase itself is deliberately never stored on the device. So
+              in any fresh browser session "Save now" demanded a passphrase
+              there was no box for, and saving became impossible exactly one
+              reload after turning the backup on.
+            */}
+            <label className="field">
+              <span>Your backup passphrase — the same one you chose when you turned this on</span>
+              <input
+                type="password"
+                placeholder="needed each time you save"
+                value={vaultPass}
+                onChange={(e) => setVaultPass(e.target.value)}
+              />
+            </label>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button className="btn" disabled={vaultBusy} onClick={() => void turnOnVault()}>
                 {vaultBusy ? "Saving…" : "Save now"}
@@ -460,6 +503,14 @@ Created ${new Date().toLocaleString()}
             </details>
           </>
         )}
+        {/*
+          The one place this message rendered was inside the collapsed
+          "new phone" section below — so "Saved.", every error, and the
+          passphrase prompts were all invisible from the buttons that caused
+          them. A button whose answer appears inside a closed drawer looks
+          like a button that does nothing.
+        */}
+        {vaultMsg && <div className="notice calm">{vaultMsg}</div>}
       </div>
 
       {/* Deliberately its own panel: this is for a DIFFERENT device, and having
