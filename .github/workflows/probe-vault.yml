@@ -1,0 +1,44 @@
+name: Probe vault upload sizes
+
+# The report from the field is "Save now runs and the date never updates" —
+# an upload that fails after the button goes busy. This container cannot reach
+# the production site (egress proxy), but GitHub's runners can. So: PUT
+# correctly-shaped test envelopes of increasing size at the real /api/vault
+# and print what the platform does with each, to find the actual ceiling a
+# full-size case has to fit under.
+#
+# Uses the same fixed test code as the deploy check (ZZZZ-TEST-CHEK-0001),
+# deliberately: version pruning caps its storage at ten blobs forever.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: PUT test envelopes of increasing size
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, urllib.request, urllib.error
+
+          URL = "https://phoenix-case-builder.netlify.app/api/vault?code=ZZZZ-TEST-CHEK-0001"
+
+          for mb in (0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 7.0):
+              # data field sized so the WHOLE json body is ~mb megabytes
+              target = int(mb * 1024 * 1024) - 200
+              body = json.dumps({
+                  "format": "phoenix-encrypted", "v": 1,
+                  "salt": "c2FsdA==", "iv": "aXYxMjM=",
+                  "data": base64.b64encode(os.urandom(target * 3 // 4)).decode(),
+              }).encode()
+              req = urllib.request.Request(URL, data=body, method="PUT",
+                                           headers={"content-type": "application/json"})
+              try:
+                  with urllib.request.urlopen(req, timeout=60) as r:
+                      print(f"{mb:>4} MB body -> HTTP {r.status} {r.read(120)!r}")
+              except urllib.error.HTTPError as e:
+                  print(f"{mb:>4} MB body -> HTTP {e.code} {e.read(200)!r}")
+              except Exception as e:
+                  print(f"{mb:>4} MB body -> {type(e).__name__}: {e}")
+          PY
