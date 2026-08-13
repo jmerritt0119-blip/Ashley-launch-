@@ -105,19 +105,47 @@ export async function pushVault(
     });
   };
 
-  let res = await send(includeFiles);
+  // An oversized upload does not always come back as a status code. Measured
+  // against production: bodies up to 5.5MB answer HTTP 200, and at 7MB the
+  // platform kills the connection mid-transfer with no response at all — so
+  // fetch THROWS, and a handler that only reads res.status never runs. That is
+  // how "Save now" spun and produced nothing: a browser without
+  // CompressionStream sends the case uncompressed at ~7.5MB, straight into
+  // that wall.
+  let res: Response | null = null;
+  let cut = false;
+  try {
+    res = await send(includeFiles);
+  } catch {
+    cut = true;
+  }
   let filesDropped = false;
 
-  // 413: over the vault's 40MB ceiling. The server's own advice is to turn off
-  // photos and videos — advice nobody could follow, because there was no switch
-  // for it anywhere in the app. Do it here instead of stopping.
-  //
-  // Her words are what she needs on her phone: incidents, messages, findings,
-  // journal. Evidence files are the bulk of the payload and base64 adds a third
-  // again on top of that; they stay on the device that holds them.
-  if (res.status === 413 && includeFiles) {
-    res = await send(false);
-    filesDropped = true;
+  // Too big, whether the platform said so (413) or just hung up (cut): retry
+  // without evidence files. Her words are what she needs on her phone —
+  // incidents, messages, findings, journal. Photos are the bulk, and base64
+  // adds a third again on top; they stay on the device that holds them.
+  if ((cut || res?.status === 413) && includeFiles) {
+    cut = false;
+    res = null;
+    try {
+      res = await send(false);
+      filesDropped = true;
+    } catch {
+      cut = true;
+    }
+  }
+
+  if (cut || !res) {
+    throw new Error(
+      typeof CompressionStream === "undefined"
+        ? "This case is too big to upload from this browser, because the browser is too old to compress it first. " +
+          "Two ways forward: update this browser, or use the Backup & restore section below — " +
+          '"Export encrypted backup" makes a file with everything in it, with no size limit, ' +
+          "that can be moved by email or USB and restored on the other device."
+        : "The connection dropped while uploading. Check the internet connection and try again — " +
+          "and if it keeps happening, the Backup & restore section below can move the case as a file instead."
+    );
   }
 
   if (!res.ok) throw new Error(await readError(res, "Couldn't save to the vault. Try again."));
